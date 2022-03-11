@@ -1,4 +1,3 @@
-import pyro
 from scvi.data import synthetic_iid
 
 from velovi import VELOVI
