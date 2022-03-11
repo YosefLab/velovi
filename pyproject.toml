@@ -17,7 +17,7 @@ classifiers = [
   "Operating System :: POSIX :: Linux",
   "Topic :: Scientific/Engineering :: Bio-Informatics",
 ]
-description = "Skeleton respository for generating novel scvi-tools models."
+description = "Inference of RNA velocity with variational inference."
 documentation = "https://scvi-tools.org"
 homepage = "https://github.com/YosefLab/velovi"
 license = "BSD-3-Clause"
