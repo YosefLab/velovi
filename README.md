@@ -17,7 +17,16 @@ from velovi import VELOVI
 
 VELOVI.setup_anndata(adata, spliced_layer="Ms", unspliced_layer="Mu")
 model = VELOVI(adata)
-model.train()
+# current training params
+model.train(
+    800,
+    plan_kwargs=dict(
+        lr=1e-2, weight_decay=2e-4, optimizer="AdamW"
+    ),
+    check_val_every_n_epoch=1,
+    batch_size=256,
+    gradient_clip_val=10,
+)
 model.get_velocity()
 model.get_latent_time()
 model.get_rates()
