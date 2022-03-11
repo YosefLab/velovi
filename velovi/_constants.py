@@ -6,5 +6,4 @@ class _REGISTRY_KEYS_NT(NamedTuple):
     U_KEY: str = "U"
 
 
-
 REGISTRY_KEYS = _REGISTRY_KEYS_NT()
