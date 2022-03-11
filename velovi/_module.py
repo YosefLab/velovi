@@ -5,23 +5,149 @@ from typing import Callable, Iterable, Optional
 import numpy as np
 import torch
 import torch.nn.functional as F
-from torch.distributions import (
-    Categorical,
-    Normal,
-    LogNormal,
-    MixtureSameFamily,
-    Dirichlet,
-)
-from torch.distributions import kl_divergence as kl
-
-from scvi import _CONSTANTS
 from scvi._compat import Literal
 from scvi.module.base import BaseModuleClass, LossRecorder, auto_move_data
-from scvi.nn import DecoderVELOVI, Encoder, one_hot
+from scvi.nn import Encoder, FCLayers
+from torch import nn as nn
+from torch.distributions import Categorical, Dirichlet, MixtureSameFamily, Normal
+from torch.distributions import kl_divergence as kl
 
 from ._constants import REGISTRY_KEYS
 
 torch.backends.cudnn.benchmark = True
+
+
+class DecoderVELOVI(nn.Module):
+    """
+    Decodes data from latent space of ``n_input`` dimensions ``n_output``dimensions.
+
+    Uses a fully-connected neural network of ``n_hidden`` layers.
+
+    Parameters
+    ----------
+    n_input
+        The dimensionality of the input (latent space)
+    n_output
+        The dimensionality of the output (data space)
+    n_cat_list
+        A list containing the number of categories
+        for each category of interest. Each category will be
+        included using a one-hot encoding
+    n_layers
+        The number of fully-connected hidden layers
+    n_hidden
+        The number of nodes per hidden layer
+    dropout_rate
+        Dropout rate to apply to each of the hidden layers
+    inject_covariates
+        Whether to inject covariates in each layer, or just the first (default).
+    use_batch_norm
+        Whether to use batch norm in layers
+    use_layer_norm
+        Whether to use layer norm in layers
+    """
+
+    def __init__(
+        self,
+        n_input: int,
+        n_output: int,
+        n_cat_list: Iterable[int] = None,
+        n_layers: int = 1,
+        n_hidden: int = 128,
+        inject_covariates: bool = True,
+        use_batch_norm: bool = True,
+        use_layer_norm: bool = False,
+        dropout_rate: float = 0.0,
+        **kwargs,
+    ):
+        super().__init__()
+        self.n_ouput = n_output
+        self.rho_first_decoder = FCLayers(
+            n_in=n_input,
+            n_out=n_hidden,
+            n_cat_list=n_cat_list,
+            n_layers=n_layers,
+            n_hidden=n_hidden,
+            dropout_rate=dropout_rate,
+            inject_covariates=inject_covariates,
+            use_batch_norm=use_batch_norm,
+            use_layer_norm=use_layer_norm,
+            **kwargs,
+            # activation_fn=torch.nn.ELU,
+        )
+
+        self.tau_first_decoder = FCLayers(
+            n_in=n_input,
+            n_out=n_hidden,
+            n_cat_list=n_cat_list,
+            n_layers=n_layers,
+            n_hidden=n_hidden,
+            dropout_rate=dropout_rate,
+            inject_covariates=inject_covariates,
+            use_batch_norm=use_batch_norm,
+            use_layer_norm=use_layer_norm,
+            **kwargs,
+            # activatnion_fn=torch.nn.ELU,
+        )
+
+        self.pi_first_decoder = FCLayers(
+            n_in=n_input,
+            n_out=n_hidden,
+            n_cat_list=n_cat_list,
+            n_layers=n_layers,
+            n_hidden=n_hidden,
+            dropout_rate=dropout_rate,
+            inject_covariates=inject_covariates,
+            use_batch_norm=use_batch_norm,
+            use_layer_norm=use_layer_norm,
+            **kwargs,
+            # activation_fn=torch.nn.ELU,
+        )
+
+        # categorical pi
+        # 4 states
+        self.px_pi_decoder = nn.Linear(n_hidden, 4 * n_output)
+
+        # rho for induction
+        self.px_rho_decoder = nn.Sequential(nn.Linear(n_hidden, n_output), nn.Sigmoid())
+
+        # tau for repression
+        self.px_tau_decoder = nn.Sequential(nn.Linear(n_hidden, n_output), nn.Sigmoid())
+
+    def forward(self, z: torch.Tensor, *cat_list: int):
+        """
+        The forward computation for a single sample.
+
+         #. Decodes the data from the latent space using the decoder network
+         #. Returns parameters for the ZINB distribution of expression
+         #. If ``dispersion != 'gene-cell'`` then value for that param will be ``None``
+
+        Parameters
+        ----------
+        z :
+            tensor with shape ``(n_input,)``
+        cat_list
+            list of category membership(s) for this sample
+
+        Returns
+        -------
+        4-tuple of :py:class:`torch.Tensor`
+            parameters for the ZINB distribution of expression
+
+        """
+        # The decoder returns values for the parameters of the ZINB distribution
+        rho_first = self.rho_first_decoder(z, *cat_list)
+        # tau_first = self.tau_first_decoder(z, *cat_list)
+
+        px_rho = self.px_rho_decoder(rho_first)
+        px_tau = self.px_tau_decoder(rho_first)
+        # cells by genes by 4
+        pi_first = self.pi_first_decoder(z, *cat_list)
+        px_pi = nn.Softplus()(
+            torch.reshape(self.px_pi_decoder(pi_first), (z.shape[0], self.n_ouput, 4))
+        )
+
+        return px_pi, px_rho, px_tau
 
 
 # VAE model
@@ -210,18 +336,9 @@ class VELOVAE(BaseModuleClass):
 
     def _get_generative_input(self, tensors, inference_outputs):
         z = inference_outputs["z"]
-        batch_index = tensors[_CONSTANTS.BATCH_KEY]
 
-        cont_key = _CONSTANTS.CONT_COVS_KEY
-        cont_covs = tensors[cont_key] if cont_key in tensors.keys() else None
-
-        cat_key = _CONSTANTS.CAT_COVS_KEY
-        cat_covs = tensors[cat_key] if cat_key in tensors.keys() else None
         input_dict = {
             "z": z,
-            "batch_index": batch_index,
-            "cont_covs": cont_covs,
-            "cat_covs": cat_covs,
         }
         return input_dict
 

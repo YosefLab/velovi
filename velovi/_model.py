@@ -1,26 +1,21 @@
-import warnings
 import logging
-from typing import List, Optional, Iterable, Sequence, Tuple, Union
+import warnings
+from typing import Iterable, List, Optional, Sequence, Tuple, Union
 
 import numpy as np
+import pandas as pd
 import torch
+import torch.nn.functional as F
 from anndata import AnnData
-from scvi.data import AnnDataManager
-from scvi.data.fields import (
-    CategoricalJointObsField,
-    CategoricalObsField,
-    LayerField,
-    NumericalJointObsField,
-)
 from scipy.sparse import isspmatrix
-
 from scvi._compat import Literal
+from scvi.data import AnnDataManager
+from scvi.data.fields import LayerField
 from scvi.model.base import BaseModelClass, UnsupervisedTrainingMixin, VAEMixin
 from scvi.utils import setup_anndata_dsp
-import pandas as pd
 
-from ._module import VELOVAE
 from ._constants import REGISTRY_KEYS
+from ._module import VELOVAE
 
 logger = logging.getLogger(__name__)
 
