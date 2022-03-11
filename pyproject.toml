@@ -19,9 +19,9 @@ classifiers = [
 ]
 description = "Skeleton respository for generating novel scvi-tools models."
 documentation = "https://scvi-tools.org"
-homepage = "https://github.com/YosefLab/scvi-tools-skeleton"
+homepage = "https://github.com/YosefLab/velovi"
 license = "BSD-3-Clause"
-name = "scvi-tools-skeleton"
+name = "velovi"
 packages = [
   {include = "velovi"},
 ]
