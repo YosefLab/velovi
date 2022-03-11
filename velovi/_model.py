@@ -36,17 +36,6 @@ class VELOVI(VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
         Number of hidden layers used for encoder and decoder NNs.
     dropout_rate
         Dropout rate for neural networks.
-    dispersion
-        One of the following:
-
-        * ``'gene'`` - dispersion parameter of NB is constant per gene across cells
-        * ``'gene-batch'`` - dispersion can differ between different batches
-        * ``'gene-label'`` - dispersion can differ between different labels
-        * ``'gene-cell'`` - dispersion can differ for every gene in every cell
-    gene_likelihood
-        One of:
-
-        * ``'normal'`` - Normal distribution
     latent_distribution
         One of:
 
@@ -63,22 +52,16 @@ class VELOVI(VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
         n_latent: int = 10,
         n_layers: int = 1,
         dropout_rate: float = 0.1,
-        dispersion: Literal["gene", "gene-batch", "gene-label", "gene-cell"] = "gene",
-        gene_likelihood: Literal["normal"] = "normal",
-        latent_distribution: Literal["normal", "ln"] = "normal",
         gamma_var_key: Optional[str] = None,
         induction_genes: Optional[Iterable[str]] = None,
         **model_kwargs,
     ):
         super().__init__(adata)
 
-        n_cats_per_cov = (
-            self.scvi_setup_dict_["extra_categoricals"]["n_cats_per_key"]
-            if "extra_categoricals" in self.scvi_setup_dict_
-            else None
-        )
+        spliced = self.adata_manager.get_from_registry(REGISTRY_KEYS.S_KEY)
+        unspliced = self.adata_manager.get_from_registry(REGISTRY_KEYS.U_KEY)
 
-        sorted_unspliced = np.argsort(adata.layers["Mu"], axis=0)
+        sorted_unspliced = np.argsort(unspliced, axis=0)
         ind = int(adata.n_obs * 0.99)
         us_upper_ind = sorted_unspliced[ind:, :]
 
@@ -86,12 +69,8 @@ class VELOVI(VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
         ms_upper = []
         for i in range(len(us_upper_ind)):
             row = us_upper_ind[i]
-            us_upper += [
-                adata.layers["Mu"][row, np.arange(adata.n_vars)][np.newaxis, :]
-            ]
-            ms_upper += [
-                adata.layers["Ms"][row, np.arange(adata.n_vars)][np.newaxis, :]
-            ]
+            us_upper += [unspliced[row, np.arange(adata.n_vars)][np.newaxis, :]]
+            ms_upper += [spliced[row, np.arange(adata.n_vars)][np.newaxis, :]]
         us_upper = np.median(np.concatenate(us_upper, axis=0), axis=0)
         ms_upper = np.median(np.concatenate(ms_upper, axis=0), axis=0)
 
@@ -109,8 +88,8 @@ class VELOVI(VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
         else:
             log_gamma = None
 
-        # ms_upper = np.percentile(adata.layers["Ms"], 99, axis=0)
-        # us_upper = np.percentile(adata.layers["Mu"], 99, axis=0)
+        # ms_upper = np.percentile(spliced, 99, axis=0)
+        # us_upper = np.percentile(unspliced, 99, axis=0)
 
         module_class = VELOVAE
         if induction_genes is not None:
@@ -124,16 +103,10 @@ class VELOVI(VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
 
         self.module = module_class(
             n_input=self.summary_stats["n_vars"],
-            n_batch=self.summary_stats["n_batch"],
-            n_labels=self.summary_stats["n_labels"],
-            n_continuous_cov=self.summary_stats["n_continuous_covs"],
-            n_cats_per_cov=n_cats_per_cov,
             n_hidden=n_hidden,
             n_latent=n_latent,
             n_layers=n_layers,
             dropout_rate=dropout_rate,
-            dispersion=dispersion,
-            latent_distribution=latent_distribution,
             log_gamma_init=log_gamma,
             log_alpha_init=log_alpha_init,
             switch_spliced=ms_upper,
@@ -143,15 +116,12 @@ class VELOVI(VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
         )
         self._model_summary_string = (
             "VELOVI Model with the following params: \nn_hidden: {}, n_latent: {}, n_layers: {}, dropout_rate: "
-            "{}, dispersion: {}, gene_likelihood: {}, latent_distribution: {}"
+            "{}"
         ).format(
             n_hidden,
             n_latent,
             n_layers,
             dropout_rate,
-            dispersion,
-            gene_likelihood,
-            latent_distribution,
         )
         self.init_params_ = self._get_init_params(locals())
 
@@ -654,7 +624,9 @@ class VELOVI(VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
         else:
             velos = np.concatenate(velos, axis=0)
 
-        velos = np.clip(velos, -adata.layers["Ms"], None)
+        spliced = self.adata_manager.get_from_registry(REGISTRY_KEYS.S_KEY)
+
+        velos = np.clip(velos, -spliced, None)
 
         if return_numpy is None or return_numpy is False:
             return pd.DataFrame(

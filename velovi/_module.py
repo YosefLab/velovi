@@ -498,7 +498,9 @@ class VELOVAE(BaseModuleClass):
             + (1 / n_obs) * kl_weight * (global_loss)
         )
 
-        loss_recoder = LossRecorder(loss, reconst_loss, kl_local, global_loss)
+        loss_recoder = LossRecorder(
+            loss, reconst_loss, kl_local, torch.tensor(global_loss)
+        )
 
         return loss_recoder
 
