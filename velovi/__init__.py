@@ -1,12 +1,12 @@
-"""scvi-tools-skeleton."""
+"""velovi."""
 
 import logging
 
 from rich.console import Console
 from rich.logging import RichHandler
 
-from ._mymodel import MyModel, MyModule
-from ._mypyromodel import MyPyroModel, MyPyroModule
+from ._constants import REGISTRY_KEYS
+from ._model import VELOVI, VELOVAE
 
 # https://github.com/python-poetry/poetry/pull/2366#issuecomment-652418094
 # https://github.com/python-poetry/poetry/issues/144#issuecomment-623927302
@@ -15,7 +15,7 @@ try:
 except ModuleNotFoundError:
     import importlib_metadata
 
-package_name = "scvi-tools-skeleton"
+package_name = "velovi"
 __version__ = importlib_metadata.version(package_name)
 
 logger = logging.getLogger(__name__)
@@ -34,4 +34,4 @@ logger.addHandler(ch)
 # this prevents double outputs
 logger.propagate = False
 
-__all__ = ["MyModel", "MyModule", "MyPyroModel", "MyPyroModule"]
+__all__ = ["VELOVI", "VELOVAE", "REGISTRY_KEYS"]
