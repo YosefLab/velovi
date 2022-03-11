@@ -27,7 +27,7 @@ class VELOVI(VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
     Parameters
     ----------
     adata
-        AnnData object that has been registered via :func:`~scvi.data.setup_anndata`.
+        AnnData object that has been registered via :func:`~velovi.VELOVI.setup_anndata`.
     n_hidden
         Number of nodes per hidden layer.
     n_latent
@@ -36,13 +36,8 @@ class VELOVI(VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
         Number of hidden layers used for encoder and decoder NNs.
     dropout_rate
         Dropout rate for neural networks.
-    latent_distribution
-        One of:
-
-        * ``'normal'`` - Normal distribution
-        * ``'ln'`` - Logistic normal distribution (Normal(0, I) transformed by softmax)
     **model_kwargs
-        Keyword args for :class:`~scvi.module.VELOVAE`
+        Keyword args for :class:`~velovi.VELOVAE`
     """
 
     def __init__(
