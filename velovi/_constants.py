@@ -2,7 +2,7 @@ from typing import NamedTuple
 
 
 class _REGISTRY_KEYS_NT(NamedTuple):
-    S_KEY: str = "S"
+    X_KEY: str = "X"
     U_KEY: str = "U"
 
 

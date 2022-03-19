@@ -325,7 +325,7 @@ class VELOVAE(BaseModuleClass):
             # self.switch_time_unconstr.requires_grad = True
 
     def _get_inference_input(self, tensors):
-        spliced = tensors[REGISTRY_KEYS.S_KEY]
+        spliced = tensors[REGISTRY_KEYS.X_KEY]
         unspliced = tensors[REGISTRY_KEYS.U_KEY]
 
         input_dict = dict(
@@ -417,7 +417,7 @@ class VELOVAE(BaseModuleClass):
         kl_weight: float = 1.0,
         n_obs: float = 1.0,
     ):
-        spliced = tensors[REGISTRY_KEYS.S_KEY]
+        spliced = tensors[REGISTRY_KEYS.X_KEY]
         unspliced = tensors[REGISTRY_KEYS.U_KEY]
 
         qz_m = inference_outputs["qz_m"]

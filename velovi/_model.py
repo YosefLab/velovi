@@ -1,5 +1,6 @@
 import logging
 import warnings
+from functools import partial
 from typing import Iterable, List, Optional, Sequence, Tuple, Union
 
 import numpy as np
@@ -9,10 +10,13 @@ import torch.nn.functional as F
 from anndata import AnnData
 from scipy.sparse import isspmatrix
 from scvi._compat import Literal
+from scvi._utils import _doc_params
 from scvi.data import AnnDataManager
 from scvi.data.fields import LayerField
+from scvi.model._utils import scrna_raw_counts_properties
 from scvi.model.base import BaseModelClass, UnsupervisedTrainingMixin, VAEMixin
-from scvi.utils import setup_anndata_dsp
+from scvi.model.base._utils import _de_core
+from scvi.utils._docstrings import doc_differential_expression, setup_anndata_dsp
 
 from ._constants import REGISTRY_KEYS
 from ._module import VELOVAE
@@ -53,7 +57,7 @@ class VELOVI(VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
     ):
         super().__init__(adata)
 
-        spliced = self.adata_manager.get_from_registry(REGISTRY_KEYS.S_KEY)
+        spliced = self.adata_manager.get_from_registry(REGISTRY_KEYS.X_KEY)
         unspliced = self.adata_manager.get_from_registry(REGISTRY_KEYS.U_KEY)
 
         sorted_unspliced = np.argsort(unspliced, axis=0)
@@ -462,11 +466,13 @@ class VELOVI(VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
         indices: Optional[Sequence[int]] = None,
         gene_list: Optional[Sequence[str]] = None,
         n_samples: int = 1,
+        n_samples_overall: Optional[int] = None,
         batch_size: Optional[int] = None,
         return_mean: bool = True,
         return_numpy: Optional[bool] = None,
         velo_statistic: str = "mean",
         velo_mode: Literal["spliced", "unspliced"] = "spliced",
+        clip: bool = True,
     ) -> Union[np.ndarray, pd.DataFrame]:
         r"""
         Returns the normalized (decoded) gene expression.
@@ -504,6 +510,8 @@ class VELOVI(VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
             Return a :class:`~numpy.ndarray` instead of a :class:`~pandas.DataFrame`. DataFrame includes
             gene names as columns. If either `n_samples=1` or `return_mean=True`, defaults to `False`.
             Otherwise, it defaults to `True`.
+        clip
+            Clip to minus spliced value
 
         Returns
         -------
@@ -511,6 +519,10 @@ class VELOVI(VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
         Otherwise, shape is `(cells, genes)`. In this case, return type is :class:`~pandas.DataFrame` unless `return_numpy` is True.
         """
         adata = self._validate_anndata(adata)
+        if indices is None:
+            indices = np.arange(adata.n_obs)
+        if n_samples_overall is not None:
+            indices = np.random.choice(indices, n_samples_overall)
         scdl = self._make_data_loader(
             adata=adata, indices=indices, batch_size=batch_size
         )
@@ -619,9 +631,10 @@ class VELOVI(VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
         else:
             velos = np.concatenate(velos, axis=0)
 
-        spliced = self.adata_manager.get_from_registry(REGISTRY_KEYS.S_KEY)
+        spliced = self.adata_manager.get_from_registry(REGISTRY_KEYS.X_KEY)
 
-        velos = np.clip(velos, -spliced, None)
+        if clip:
+            velos = np.clip(velos, -spliced, None)
 
         if return_numpy is None or return_numpy is False:
             return pd.DataFrame(
@@ -713,7 +726,7 @@ class VELOVI(VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
                     tensors=tensors,
                     compute_loss=False,
                 )
-                spliced = tensors[REGISTRY_KEYS.S_KEY]
+                spliced = tensors[REGISTRY_KEYS.X_KEY]
                 unspliced = tensors[REGISTRY_KEYS.U_KEY]
 
                 gamma = inference_outputs["gamma"]
@@ -809,7 +822,7 @@ class VELOVI(VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
         """
         setup_method_args = cls._get_setup_method_args(**locals())
         anndata_fields = [
-            LayerField(REGISTRY_KEYS.S_KEY, spliced_layer, is_count_data=False),
+            LayerField(REGISTRY_KEYS.X_KEY, spliced_layer, is_count_data=False),
             LayerField(REGISTRY_KEYS.U_KEY, unspliced_layer, is_count_data=False),
         ]
         adata_manager = AnnDataManager(
@@ -817,3 +830,79 @@ class VELOVI(VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
         )
         adata_manager.register_fields(adata, **kwargs)
         cls.register_manager(adata_manager)
+
+    @torch.no_grad()
+    @_doc_params(
+        doc_differential_expression=doc_differential_expression,
+    )
+    def differential_velocity(
+        self,
+        adata: Optional[AnnData] = None,
+        groupby: Optional[str] = None,
+        group1: Optional[Iterable[str]] = None,
+        group2: Optional[str] = None,
+        idx1: Optional[Union[Sequence[int], Sequence[bool], str]] = None,
+        idx2: Optional[Union[Sequence[int], Sequence[bool], str]] = None,
+        mode: Literal["vanilla", "change"] = "change",
+        delta: float = 0.25,
+        batch_size: Optional[int] = None,
+        all_stats: bool = True,
+        batch_correction: bool = False,
+        batchid1: Optional[Iterable[str]] = None,
+        batchid2: Optional[Iterable[str]] = None,
+        fdr_target: float = 0.05,
+        silent: bool = False,
+        **kwargs,
+    ) -> pd.DataFrame:
+        r"""
+        A unified method for differential velocity analysis.
+
+        Implements `"vanilla"` DE [Lopez18]_ and `"change"` mode DE [Boyeau19]_.
+
+        Parameters
+        ----------
+        {doc_differential_expression}
+        **kwargs
+            Keyword args for :meth:`scvi.model.base.DifferentialComputation.get_bayes_factors`
+
+        Returns
+        -------
+        Differential expression DataFrame.
+        """
+        adata = self._validate_anndata(adata)
+
+        def model_fn(adata, **kwargs):
+            if "transform_batch" in kwargs.keys():
+                kwargs.pop("transform_batch")
+            return partial(
+                self.get_velocity,
+                batch_size=batch_size,
+                n_samples=1,
+                return_numpy=True,
+                clip=False,
+            )(adata, **kwargs)
+
+        col_names = adata.var_names
+
+        result = _de_core(
+            self.get_anndata_manager(adata, required=True),
+            model_fn,
+            groupby,
+            group1,
+            group2,
+            idx1,
+            idx2,
+            all_stats,
+            scrna_raw_counts_properties,
+            col_names,
+            mode,
+            batchid1,
+            batchid2,
+            delta,
+            batch_correction,
+            fdr_target,
+            silent,
+            **kwargs,
+        )
+
+        return result

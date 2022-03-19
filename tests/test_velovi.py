@@ -15,6 +15,7 @@ def test_velovi():
     model.get_velocity()
     model.get_latent_time()
     model.get_state_assignment()
+    model.differential_velocity(groupby="labels")
     model.history
 
     # tests __repr__
