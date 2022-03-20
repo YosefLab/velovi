@@ -17,6 +17,7 @@ from scvi.model._utils import scrna_raw_counts_properties
 from scvi.model.base import BaseModelClass, UnsupervisedTrainingMixin, VAEMixin
 from scvi.model.base._utils import _de_core
 from scvi.utils._docstrings import doc_differential_expression, setup_anndata_dsp
+from sklearn.metrics.pairwise import cosine_similarity
 
 from ._constants import REGISTRY_KEYS
 from ._module import VELOVAE
@@ -634,7 +635,7 @@ class VELOVI(VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
         spliced = self.adata_manager.get_from_registry(REGISTRY_KEYS.X_KEY)
 
         if clip:
-            velos = np.clip(velos, -spliced, None)
+            velos = np.clip(velos, -spliced[indices], None)
 
         if return_numpy is None or return_numpy is False:
             return pd.DataFrame(
@@ -843,7 +844,7 @@ class VELOVI(VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
         group2: Optional[str] = None,
         idx1: Optional[Union[Sequence[int], Sequence[bool], str]] = None,
         idx2: Optional[Union[Sequence[int], Sequence[bool], str]] = None,
-        mode: Literal["vanilla", "change"] = "change",
+        mode: Literal["vanilla", "change"] = "vanilla",
         delta: float = 0.25,
         batch_size: Optional[int] = None,
         all_stats: bool = True,
@@ -906,3 +907,49 @@ class VELOVI(VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
         )
 
         return result
+
+    def differential_transition(
+        self,
+        groupby: str,
+        group1: str,
+        group2: str,
+        adata: Optional[AnnData] = None,
+        batch_size: Optional[int] = None,
+        n_samples: Optional[int] = 5000,
+        **kwargs,
+    ) -> pd.DataFrame:
+        adata = self._validate_anndata(adata)
+        adata_manager = self.get_anndata_manager(adata, required=True)
+
+        if not isinstance(group1, str):
+            raise ValueError("Group 1 must be a string")
+
+        cell_idx1 = (adata.obs[groupby] == group1).to_numpy().ravel()
+        if group2 is None:
+            cell_idx2 = ~cell_idx1
+        else:
+            cell_idx2 = (adata.obs[groupby] == group2).to_numpy().ravel()
+
+        indices1 = np.random.choice(
+            np.asarray(np.where(cell_idx1)[0].ravel()), n_samples
+        )
+        indices2 = np.random.choice(
+            np.asarray(np.where(cell_idx2)[0].ravel()), n_samples
+        )
+
+        velo1 = self.get_velocity(
+            adata,
+            return_numpy=True,
+            indices=indices1,
+            n_samples=1,
+            batch_size=batch_size,
+        )
+        velo1 = velo1 - velo1.mean(1)[:, np.newaxis]
+
+        spliced = adata_manager.get_from_registry(REGISTRY_KEYS.X_KEY)
+        delta = spliced[indices2] - spliced[indices1]
+        delta = delta - delta.mean(1)[:, np.newaxis]
+
+        correlation = cosine_similarity(velo1, delta)
+
+        return correlation
