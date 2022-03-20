@@ -945,12 +945,24 @@ class VELOVI(VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
             batch_size=batch_size,
         )
         velo1 = velo1 - velo1.mean(1)[:, np.newaxis]
+        velo2 = self.get_velocity(
+            adata,
+            return_numpy=True,
+            indices=indices2,
+            n_samples=1,
+            batch_size=batch_size,
+        )
+        velo2 = velo2 - velo2.mean(1)[:, np.newaxis]
 
         spliced = adata_manager.get_from_registry(REGISTRY_KEYS.X_KEY)
-        delta = spliced[indices2] - spliced[indices1]
-        delta = delta - delta.mean(1)[:, np.newaxis]
+        delta12 = spliced[indices2] - spliced[indices1]
+        delta12 = delta12 - delta12.mean(1)[:, np.newaxis]
+
+        delta21 = spliced[indices1] - spliced[indices2]
+        delta21 = delta21 - delta21.mean(1)[:, np.newaxis]
 
         # TODO: Make more efficient
-        correlation = np.diagonal(cosine_similarity(velo1, delta))
+        correlation12 = np.diagonal(cosine_similarity(velo1, delta12))
+        correlation21 = np.diagonal(cosine_similarity(velo2, delta21))
 
-        return correlation
+        return correlation12, correlation21
