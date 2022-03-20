@@ -950,6 +950,7 @@ class VELOVI(VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
         delta = spliced[indices2] - spliced[indices1]
         delta = delta - delta.mean(1)[:, np.newaxis]
 
-        correlation = cosine_similarity(velo1, delta)
+        # TODO: Make more efficient
+        correlation = np.diagonal(cosine_similarity(velo1, delta))
 
         return correlation
