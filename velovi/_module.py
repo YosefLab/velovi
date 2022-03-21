@@ -207,6 +207,7 @@ class VELOVAE(BaseModuleClass):
         induction_gene_mask: Optional[np.ndarray] = None,
         t_max: float = 20,
         penalty_scale: float = 0.2,
+        alpha_max: float = 5.0,
     ):
         super().__init__()
         self.n_latent = n_latent
@@ -217,6 +218,7 @@ class VELOVAE(BaseModuleClass):
         self.model_steady_states = model_steady_states
         self.t_max = t_max
         self.penalty_scale = penalty_scale
+        self.alpha_max = alpha_max
 
         if induction_gene_mask is not None:
             self.register_buffer(
@@ -371,16 +373,21 @@ class VELOVAE(BaseModuleClass):
             untran_z = Normal(qz_m, qz_v.sqrt()).sample()
             z = self.z_encoder.z_transformation(untran_z)
 
+        gamma, beta, alpha = self._get_rates()
+
+        outputs = dict(z=z, qz_m=qz_m, qz_v=qz_v, gamma=gamma, beta=beta, alpha=alpha)
+        return outputs
+
+    def _get_rates(self):
         # globals
         # degradation
         gamma = torch.clamp(F.softplus(self.gamma_mean_unconstr), 0, 50)
         # splicing
         beta = torch.clamp(F.softplus(self.beta_mean_unconstr), 0, 50)
         # transcription
-        alpha = torch.clamp(F.softplus(self.alpha_unconstr), 0, 1500)
+        alpha = torch.clamp(F.softplus(self.alpha_unconstr), 0, self.alpha_max)
 
-        outputs = dict(z=z, qz_m=qz_m, qz_v=qz_v, gamma=gamma, beta=beta, alpha=alpha)
-        return outputs
+        return gamma, beta, alpha
 
     @auto_move_data
     def generative(

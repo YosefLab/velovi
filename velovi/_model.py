@@ -790,13 +790,14 @@ class VELOVI(VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
 
     @torch.no_grad()
     def get_rates(self, mean: bool = True):
-        softplus = torch.nn.functional.softplus
 
-        beta = softplus(self.module.beta_mean_unconstr).detach().cpu().numpy()
-        gamma = softplus(self.module.gamma_mean_unconstr).detach().cpu().numpy()
-        alpha = softplus(self.module.alpha_unconstr).detach().cpu().numpy()
+        gamma, beta, alpha = self.module._get_rates()
 
-        return {"beta": beta, "gamma": gamma, "alpha": alpha}
+        return {
+            "beta": beta.cpu().numpy(),
+            "gamma": gamma.cpu().numpy(),
+            "alpha": alpha.cpu().numpy(),
+        }
 
     @classmethod
     @setup_anndata_dsp.dedent
