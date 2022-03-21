@@ -610,7 +610,7 @@ class VELOVAE(BaseModuleClass):
             ),
             dim=2,
         )
-        dist_s = Normal(torch.clamp(mean_s, 0, 3000), scale_s)
+        dist_s = Normal(mean_s, scale_s)
         mixture_dist_s = MixtureSameFamily(comp_dist, dist_s)
         reconst_loss_s = -mixture_dist_s.log_prob(spliced)
 
