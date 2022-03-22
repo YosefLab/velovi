@@ -338,9 +338,17 @@ class VELOVAE(BaseModuleClass):
 
     def _get_generative_input(self, tensors, inference_outputs):
         z = inference_outputs["z"]
+        gamma = inference_outputs["gamma"]
+        beta = inference_outputs["beta"]
+        alpha = inference_outputs["alpha"]
 
         input_dict = {
             "z": z,
+            "spliced": tensors[REGISTRY_KEYS.X_KEY],
+            "unspliced": tensors[REGISTRY_KEYS.U_KEY],
+            "gamma": gamma,
+            "beta": beta,
+            "alpha": alpha,
         }
         return input_dict
 
@@ -393,6 +401,11 @@ class VELOVAE(BaseModuleClass):
     def generative(
         self,
         z,
+        spliced,
+        unspliced,
+        gamma,
+        beta,
+        alpha,
     ):
         """Runs the generative model."""
         decoder_input = z
@@ -408,12 +421,25 @@ class VELOVAE(BaseModuleClass):
         scale_unconstr = self.scale_unconstr
         scale = F.softplus(scale_unconstr)
 
+        mixture_dist_s, mixture_dist_u, end_penalty = self.get_px(
+            px_pi,
+            px_rho,
+            px_tau,
+            scale,
+            gamma,
+            beta,
+            alpha,
+        )
+
         return dict(
             px_pi=px_pi,
             px_rho=px_rho,
             px_tau=px_tau,
             scale=scale,
             px_pi_alpha=px_pi_alpha,
+            mixture_dist_u=mixture_dist_u,
+            mixture_dist_s=mixture_dist_s,
+            end_penalty=end_penalty,
         )
 
     def loss(
@@ -429,28 +455,19 @@ class VELOVAE(BaseModuleClass):
 
         qz_m = inference_outputs["qz_m"]
         qz_v = inference_outputs["qz_v"]
-        gamma = inference_outputs["gamma"]
-        beta = inference_outputs["beta"]
-        alpha = inference_outputs["alpha"]
+
         px_pi = generative_outputs["px_pi"]
         px_pi_alpha = generative_outputs["px_pi_alpha"]
-        scale = generative_outputs["scale"]
-        px_rho = generative_outputs["px_rho"]
-        px_tau = generative_outputs["px_tau"]
+
+        end_penalty = generative_outputs["end_penalty"]
+        mixture_dist_s = generative_outputs["mixture_dist_s"]
+        mixture_dist_u = generative_outputs["mixture_dist_u"]
 
         kl_divergence_z = kl(Normal(qz_m, torch.sqrt(qz_v)), Normal(0, 1)).sum(dim=1)
 
-        reconst_loss_s, reconst_loss_u, end_penalty = self.get_reconstruction_loss(
-            spliced,
-            unspliced,
-            px_pi,
-            px_rho,
-            px_tau,
-            scale,
-            gamma,
-            beta,
-            alpha,
-        )
+        reconst_loss_s = -mixture_dist_s.log_prob(spliced)
+        reconst_loss_u = -mixture_dist_u.log_prob(unspliced)
+
         reconst_loss = reconst_loss_u.sum(dim=-1) + reconst_loss_s.sum(dim=-1)
 
         if hasattr(self, "induction_gene_mask"):
@@ -512,10 +529,8 @@ class VELOVAE(BaseModuleClass):
         return loss_recoder
 
     @auto_move_data
-    def get_reconstruction_loss(
+    def get_px(
         self,
-        spliced,
-        unspliced,
         px_pi,
         px_rho,
         px_tau,
@@ -601,7 +616,6 @@ class VELOVAE(BaseModuleClass):
         )
         dist_u = Normal(mean_u, scale_u)
         mixture_dist_u = MixtureSameFamily(comp_dist, dist_u)
-        reconst_loss_u = -mixture_dist_u.log_prob(unspliced)
 
         # spliced
         mean_s = torch.stack(
@@ -619,9 +633,8 @@ class VELOVAE(BaseModuleClass):
         )
         dist_s = Normal(mean_s, scale_s)
         mixture_dist_s = MixtureSameFamily(comp_dist, dist_s)
-        reconst_loss_s = -mixture_dist_s.log_prob(spliced)
 
-        return reconst_loss_s, reconst_loss_u, end_penalty
+        return mixture_dist_s, mixture_dist_u, end_penalty
 
     def _get_induction_unspliced_spliced(self, alpha, beta, gamma, t, eps=1e-6):
         unspliced = (alpha / beta) * (1 - torch.exp(-beta * t))

@@ -647,6 +647,155 @@ class VELOVI(VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
             return velos
 
     @torch.no_grad()
+    def get_expression_fit(
+        self,
+        adata: Optional[AnnData] = None,
+        indices: Optional[Sequence[int]] = None,
+        gene_list: Optional[Sequence[str]] = None,
+        n_samples: int = 1,
+        batch_size: Optional[int] = None,
+        return_mean: bool = True,
+        return_numpy: Optional[bool] = None,
+    ) -> Union[np.ndarray, pd.DataFrame]:
+        r"""
+        Returns the normalized (decoded) gene expression.
+
+        This is denoted as :math:`\rho_n` in the scVI paper.
+
+        Parameters
+        ----------
+        adata
+            AnnData object with equivalent structure to initial AnnData. If `None`, defaults to the
+            AnnData object used to initialize the model.
+        indices
+            Indices of cells in adata to use. If `None`, all cells are used.
+        transform_batch
+            Batch to condition on.
+            If transform_batch is:
+
+            - None, then real observed batch is used.
+            - int, then batch transform_batch is used.
+        gene_list
+            Return frequencies of expression for a subset of genes.
+            This can save memory when working with large datasets and few genes are
+            of interest.
+        library_size
+            Scale the expression frequencies to a common library size.
+            This allows gene expression levels to be interpreted on a common scale of relevant
+            magnitude. If set to `"latent"`, use the latent libary size.
+        n_samples
+            Number of posterior samples to use for estimation.
+        batch_size
+            Minibatch size for data loading into model. Defaults to `scvi.settings.batch_size`.
+        return_mean
+            Whether to return the mean of the samples.
+        return_numpy
+            Return a :class:`~numpy.ndarray` instead of a :class:`~pandas.DataFrame`. DataFrame includes
+            gene names as columns. If either `n_samples=1` or `return_mean=True`, defaults to `False`.
+            Otherwise, it defaults to `True`.
+        clip
+            Clip to minus spliced value
+
+        Returns
+        -------
+        If `n_samples` > 1 and `return_mean` is False, then the shape is `(samples, cells, genes)`.
+        Otherwise, shape is `(cells, genes)`. In this case, return type is :class:`~pandas.DataFrame` unless `return_numpy` is True.
+        """
+        adata = self._validate_anndata(adata)
+
+        scdl = self._make_data_loader(
+            adata=adata, indices=indices, batch_size=batch_size
+        )
+
+        if gene_list is None:
+            gene_mask = slice(None)
+        else:
+            all_genes = adata.var_names
+            gene_mask = [True if gene in gene_list else False for gene in all_genes]
+
+        if n_samples > 1 and return_mean is False:
+            if return_numpy is False:
+                warnings.warn(
+                    "return_numpy must be True if n_samples > 1 and return_mean is False, returning np.ndarray"
+                )
+            return_numpy = True
+        if indices is None:
+            indices = np.arange(adata.n_obs)
+
+        fits_s = []
+        fits_u = []
+        for tensors in scdl:
+            minibatch_samples_s = []
+            minibatch_samples_u = []
+            for _ in range(n_samples):
+                inference_outputs, generative_outputs = self.module.forward(
+                    tensors=tensors,
+                    compute_loss=False,
+                )
+
+                gamma = inference_outputs["gamma"]
+                beta = inference_outputs["beta"]
+                alpha = inference_outputs["alpha"]
+                px_pi = generative_outputs["px_pi"]
+                scale = generative_outputs["scale"]
+                px_rho = generative_outputs["px_rho"]
+                px_tau = generative_outputs["px_tau"]
+
+                (mixture_dist_s, mixture_dist_u, _,) = self.module.get_px(
+                    px_pi,
+                    px_rho,
+                    px_tau,
+                    scale,
+                    gamma,
+                    beta,
+                    alpha,
+                )
+                fit_s = mixture_dist_s.mean
+                fit_u = mixture_dist_u.mean
+
+                fit_s = fit_s[..., gene_mask]
+                fit_s = fit_s.cpu().numpy()
+                fit_u = fit_u[..., gene_mask]
+                fit_u = fit_u.cpu().numpy()
+
+                minibatch_samples_s.append(fit_s)
+                minibatch_samples_u.append(fit_u)
+
+            # samples by cells by genes
+            fits_s.append(np.stack(minibatch_samples_s, axis=0))
+            if return_mean:
+                # mean over samples axis
+                fits_s[-1] = np.mean(fits_s[-1], axis=0)
+            # samples by cells by genes
+            fits_u.append(np.stack(minibatch_samples_u, axis=0))
+            if return_mean:
+                # mean over samples axis
+                fits_u[-1] = np.mean(fits_u[-1], axis=0)
+
+        if n_samples > 1:
+            # The -2 axis correspond to cells.
+            fits_s = np.concatenate(fits_s, axis=-2)
+            fits_u = np.concatenate(fits_u, axis=-2)
+        else:
+            fits_s = np.concatenate(fits_s, axis=0)
+            fits_u = np.concatenate(fits_u, axis=0)
+
+        if return_numpy is None or return_numpy is False:
+            df_s = pd.DataFrame(
+                fits_s,
+                columns=adata.var_names[gene_mask],
+                index=adata.obs_names[indices],
+            )
+            df_u = pd.DataFrame(
+                fits_u,
+                columns=adata.var_names[gene_mask],
+                index=adata.obs_names[indices],
+            )
+            return df_s, df_u
+        else:
+            return fits_s, fits_u
+
+    @torch.no_grad()
     def get_gene_likelihood(
         self,
         adata: Optional[AnnData] = None,
@@ -738,44 +887,17 @@ class VELOVI(VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
                 px_rho = generative_outputs["px_rho"]
                 px_tau = generative_outputs["px_tau"]
 
-                if self._gene_likelihood != "normal":
-                    px_expr_u = generative_outputs["px_expr_u"]
-                    px_expr_s = generative_outputs["px_expr_s"]
-                    px_r_expr = generative_outputs["px_r_expr"]
-                    (
-                        reconst_loss_s,
-                        reconst_loss_u,
-                        _,
-                    ) = self.module.get_reconstruction_loss(
-                        spliced,
-                        unspliced,
-                        px_pi,
-                        px_rho,
-                        px_tau,
-                        scale,
-                        gamma,
-                        beta,
-                        alpha,
-                        px_expr_u,
-                        px_expr_s,
-                        px_r_expr,
-                    )
-                else:
-                    (
-                        reconst_loss_s,
-                        reconst_loss_u,
-                        _,
-                    ) = self.module.get_reconstruction_loss(
-                        spliced,
-                        unspliced,
-                        px_pi,
-                        px_rho,
-                        px_tau,
-                        scale,
-                        gamma,
-                        beta,
-                        alpha,
-                    )
+                (mixture_dist_s, mixture_dist_u, _,) = self.module.get_px(
+                    px_pi,
+                    px_rho,
+                    px_tau,
+                    scale,
+                    gamma,
+                    beta,
+                    alpha,
+                )
+                reconst_loss_s = -mixture_dist_s.log_prob(spliced)
+                reconst_loss_u = -mixture_dist_u.log_prob(unspliced)
                 output = -(reconst_loss_s + reconst_loss_u)
                 output = output[..., gene_mask]
                 output = output.cpu().numpy()
