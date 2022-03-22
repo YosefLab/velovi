@@ -385,7 +385,7 @@ class VELOVAE(BaseModuleClass):
         # splicing
         beta = torch.clamp(F.softplus(self.beta_mean_unconstr), 0, 50)
         # transcription
-        alpha = torch.clamp(F.softplus(self.alpha_unconstr), 0, self.alpha_max)
+        alpha = torch.clamp(F.softplus(self.alpha_unconstr), 0, 50)
 
         return gamma, beta, alpha
 
