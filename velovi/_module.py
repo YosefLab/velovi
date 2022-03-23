@@ -208,6 +208,7 @@ class VELOVAE(BaseModuleClass):
         t_max: float = 20,
         penalty_scale: float = 0.2,
         alpha_max: float = 5.0,
+        dirichlet_concentration: float = 0.25,
     ):
         super().__init__()
         self.n_latent = n_latent
@@ -219,6 +220,7 @@ class VELOVAE(BaseModuleClass):
         self.t_max = t_max
         self.penalty_scale = penalty_scale
         self.alpha_max = alpha_max
+        self.dirichlet_concentration = dirichlet_concentration
 
         if induction_gene_mask is not None:
             self.register_buffer(
@@ -484,7 +486,8 @@ class VELOVAE(BaseModuleClass):
             ).sum(dim=-1)
         else:
             kl_pi = kl(
-                Dirichlet(px_pi_alpha), Dirichlet(0.25 * torch.ones_like(px_pi))
+                Dirichlet(px_pi_alpha),
+                Dirichlet(self.dirichlet_concentration * torch.ones_like(px_pi)),
             ).sum(dim=-1)
         # kl_pi = 0
 
