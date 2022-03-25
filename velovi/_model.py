@@ -88,8 +88,11 @@ class VELOVI(VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
         us_upper = np.median(np.concatenate(us_upper, axis=0), axis=0)
         ms_upper = np.median(np.concatenate(ms_upper, axis=0), axis=0)
 
-        alpha_unconstr = _softplus_inverse(us_upper)
-        alpha_unconstr = np.asarray(alpha_unconstr).ravel()
+        # TODO: Update to new model `alpha_0`, `alpha_1`, `lambda_alpha`
+        alpha_0_unconstr = _softplus_inverse(us_upper)
+        alpha_0_unconstr = np.asarray(alpha_0_unconstr).ravel()
+        alpha_1_unconstr = np.zeros(us_upper.shape).ravel()
+        lambda_alpha_unconstr = np.zeros(us_upper.shape).ravel()
 
         if gamma_init_data:
             gamma_unconstr = np.clip(_softplus_inverse(us_upper / ms_upper), None, 10)
@@ -103,7 +106,9 @@ class VELOVI(VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
             n_layers=n_layers,
             dropout_rate=dropout_rate,
             gamma_unconstr_init=gamma_unconstr,
-            alpha_unconstr_init=alpha_unconstr,
+            alpha_0_unconstr_init=alpha_0_unconstr,
+            alpha_1_unconstr_init=alpha_1_unconstr,
+            lambda_alpha_unconstr_init=lambda_alpha_unconstr,
             switch_spliced=ms_upper,
             switch_unspliced=us_upper,
             linear_decoder=linear_decoder,
@@ -526,7 +531,9 @@ class VELOVI(VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
                     compute_loss=False,
                 )
                 pi = generative_outputs["px_pi"]
-                alpha = inference_outputs["alpha"]
+                alpha_0 = inference_outputs["alpha_0"]
+                alpha_1 = inference_outputs["alpha_1"]
+                lambda_alpha = inference_outputs["lambda_alpha"]
                 beta = inference_outputs["beta"]
                 gamma = inference_outputs["gamma"]
                 tau = generative_outputs["px_tau"]
@@ -539,7 +546,7 @@ class VELOVI(VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
 
                 ind_time = switch_time * rho
                 u_0, s_0 = self.module._get_induction_unspliced_spliced(
-                    alpha, beta, gamma, switch_time
+                    alpha_0, alpha_1, lambda_alpha, beta, gamma, switch_time
                 )
                 rep_time = (self.module.t_max - switch_time) * tau
                 mean_u_rep, mean_s_rep = self.module._get_repression_unspliced_spliced(
@@ -554,12 +561,12 @@ class VELOVI(VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
                 else:
                     velo_rep = -beta * mean_u_rep
                 mean_u_ind, mean_s_ind = self.module._get_induction_unspliced_spliced(
-                    alpha, beta, gamma, ind_time
+                    alpha_0, alpha_1, lambda_alpha, beta, gamma, ind_time
                 )
                 if velo_mode == "spliced":
                     velo_ind = beta * mean_u_ind - gamma * mean_s_ind
                 else:
-                    velo_ind = alpha - beta * mean_u_ind
+                    velo_ind = alpha_1 - beta * mean_u_ind
 
                 if velo_mode == "spliced":
                     # velo_steady = beta * u_0 - gamma * s_0
@@ -823,7 +830,9 @@ class VELOVI(VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
 
                 gamma = inference_outputs["gamma"]
                 beta = inference_outputs["beta"]
-                alpha = inference_outputs["alpha"]
+                alpha_0 = inference_outputs["alpha_0"]
+                alpha_1 = inference_outputs["alpha_1"]
+                lambda_alpha = inference_outputs["lambda_alpha"]
                 px_pi = generative_outputs["px_pi"]
                 scale = generative_outputs["scale"]
                 px_rho = generative_outputs["px_rho"]
@@ -836,7 +845,9 @@ class VELOVI(VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
                     scale,
                     gamma,
                     beta,
-                    alpha,
+                    alpha_0,
+                    alpha_1,
+                    lambda_alpha,
                 )
                 fit_s = mixture_dist_s.mean
                 fit_u = mixture_dist_u.mean
@@ -969,7 +980,9 @@ class VELOVI(VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
 
                 gamma = inference_outputs["gamma"]
                 beta = inference_outputs["beta"]
-                alpha = inference_outputs["alpha"]
+                alpha_0 = inference_outputs["alpha_0"]
+                alpha_1 = inference_outputs["alpha_1"]
+                lambda_alpha = inference_outputs["lambda_alpha"]
                 px_pi = generative_outputs["px_pi"]
                 scale = generative_outputs["scale"]
                 px_rho = generative_outputs["px_rho"]
@@ -982,7 +995,9 @@ class VELOVI(VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
                     scale,
                     gamma,
                     beta,
-                    alpha,
+                    alpha_0,
+                    alpha_1,
+                    lambda_alpha,
                 )
                 reconst_loss_s = -mixture_dist_s.log_prob(spliced)
                 reconst_loss_u = -mixture_dist_u.log_prob(unspliced)
@@ -1001,12 +1016,14 @@ class VELOVI(VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
     @torch.no_grad()
     def get_rates(self, mean: bool = True):
 
-        gamma, beta, alpha = self.module._get_rates()
+        gamma, beta, alpha_0, alpha_1, lambda_alpha = self.module._get_rates()
 
         return {
             "beta": beta.cpu().numpy(),
             "gamma": gamma.cpu().numpy(),
-            "alpha": alpha.cpu().numpy(),
+            "alpha_0": alpha_0.cpu().numpy(),
+            "alpha_1": alpha_1.cpu().numpy(),
+            "lambda_alpha": lambda_alpha.cpu().numpy(),
         }
 
     @classmethod
