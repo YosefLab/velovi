@@ -321,6 +321,7 @@ class VELOVI(VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
         gene_list: Optional[Sequence[str]] = None,
         time_statistic: Literal["mean", "max"] = "mean",
         n_samples: int = 1,
+        n_samples_overall: Optional[int] = None,
         batch_size: Optional[int] = None,
         return_mean: bool = True,
         return_numpy: Optional[bool] = None,
@@ -362,6 +363,10 @@ class VELOVI(VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
         Otherwise, shape is `(cells, genes)`. In this case, return type is :class:`~pandas.DataFrame` unless `return_numpy` is True.
         """
         adata = self._validate_anndata(adata)
+        if indices is None:
+            indices = np.arange(adata.n_obs)
+        if n_samples_overall is not None:
+            indices = np.random.choice(indices, n_samples_overall)
         scdl = self._make_data_loader(
             adata=adata, indices=indices, batch_size=batch_size
         )
@@ -1031,6 +1036,82 @@ class VELOVI(VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
 
         return result
 
+    @torch.no_grad()
+    @_doc_params(
+        doc_differential_expression=doc_differential_expression,
+    )
+    def differential_time(
+        self,
+        adata: Optional[AnnData] = None,
+        groupby: Optional[str] = None,
+        group1: Optional[Iterable[str]] = None,
+        group2: Optional[str] = None,
+        idx1: Optional[Union[Sequence[int], Sequence[bool], str]] = None,
+        idx2: Optional[Union[Sequence[int], Sequence[bool], str]] = None,
+        mode: Literal["vanilla", "change"] = "vanilla",
+        delta: float = 0.25,
+        batch_size: Optional[int] = None,
+        all_stats: bool = True,
+        batch_correction: bool = False,
+        batchid1: Optional[Iterable[str]] = None,
+        batchid2: Optional[Iterable[str]] = None,
+        fdr_target: float = 0.05,
+        silent: bool = False,
+        **kwargs,
+    ) -> pd.DataFrame:
+        r"""
+        A unified method for differential velocity analysis.
+
+        Implements `"vanilla"` DE [Lopez18]_ and `"change"` mode DE [Boyeau19]_.
+
+        Parameters
+        ----------
+        {doc_differential_expression}
+        **kwargs
+            Keyword args for :meth:`scvi.model.base.DifferentialComputation.get_bayes_factors`
+
+        Returns
+        -------
+        Differential expression DataFrame.
+        """
+        adata = self._validate_anndata(adata)
+
+        def model_fn(adata, **kwargs):
+            if "transform_batch" in kwargs.keys():
+                kwargs.pop("transform_batch")
+            return partial(
+                self.get_latent_time,
+                batch_size=batch_size,
+                n_samples=1,
+                return_numpy=True,
+            )(adata, **kwargs)
+
+        col_names = adata.var_names
+
+        result = _de_core(
+            self.get_anndata_manager(adata, required=True),
+            model_fn,
+            groupby,
+            group1,
+            group2,
+            idx1,
+            idx2,
+            all_stats,
+            scrna_raw_counts_properties,
+            col_names,
+            mode,
+            batchid1,
+            batchid2,
+            delta,
+            batch_correction,
+            fdr_target,
+            silent,
+            **kwargs,
+        )
+
+        return result
+
+    @torch.no_grad()
     def differential_transition(
         self,
         groupby: str,
