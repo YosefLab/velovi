@@ -398,6 +398,7 @@ class VELOVI(VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
                 ind_prob = pi[..., 0]
                 steady_prob = pi[..., 1]
                 rep_prob = pi[..., 2]
+                rep_steady_prob = pi[..., 3]
                 # renormalize
                 switch_time = F.softplus(self.module.switch_time_unconstr)
 
@@ -426,6 +427,7 @@ class VELOVI(VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
                         ind_prob * ind_time
                         + rep_prob * rep_time
                         + steady_prob * switch_time
+                        + rep_steady_prob * self.module.t_max
                     )
                 else:
                     t = torch.stack(
