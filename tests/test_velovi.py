@@ -20,6 +20,10 @@ def test_velovi():
     model.differential_time(groupby="labels")
     model.get_expression_fit()
 
+    model = VELOVI(adata, n_latent=n_latent, linear_decoder=True)
+    model.train(1, train_size=0.5)
+    model.get_loadings()
+
     model.history
 
     # tests __repr__

@@ -41,6 +41,8 @@ class VELOVI(VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
         Number of hidden layers used for encoder and decoder NNs.
     dropout_rate
         Dropout rate for neural networks.
+    linear_decoder
+        Use a linear decoder from latent space to time.
     **model_kwargs
         Keyword args for :class:`~velovi.VELOVAE`
     """
@@ -54,9 +56,11 @@ class VELOVI(VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
         dropout_rate: float = 0.1,
         gamma_var_key: Optional[str] = None,
         induction_genes: Optional[Iterable[str]] = None,
+        linear_decoder: bool = False,
         **model_kwargs,
     ):
         super().__init__(adata)
+        self.n_latent = n_latent
 
         spliced = self.adata_manager.get_from_registry(REGISTRY_KEYS.X_KEY)
         unspliced = self.adata_manager.get_from_registry(REGISTRY_KEYS.U_KEY)
@@ -91,7 +95,6 @@ class VELOVI(VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
         # ms_upper = np.percentile(spliced, 99, axis=0)
         # us_upper = np.percentile(unspliced, 99, axis=0)
 
-        module_class = VELOVAE
         if induction_genes is not None:
             induction_gene_mask = pd.Series(
                 [False] * adata.n_vars, index=adata.var_names
@@ -101,7 +104,7 @@ class VELOVI(VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
         else:
             induction_gene_mask = None
 
-        self.module = module_class(
+        self.module = VELOVAE(
             n_input=self.summary_stats["n_vars"],
             n_hidden=n_hidden,
             n_latent=n_latent,
@@ -112,6 +115,7 @@ class VELOVI(VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
             switch_spliced=ms_upper,
             switch_unspliced=us_upper,
             induction_gene_mask=induction_gene_mask,
+            linear_decoder=linear_decoder,
             **model_kwargs,
         )
         self._model_summary_string = (
@@ -1175,3 +1179,18 @@ class VELOVI(VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
         correlation21 = np.diagonal(cosine_similarity(velo2, delta21))
 
         return correlation12, correlation21
+
+    def get_loadings(self) -> pd.DataFrame:
+        """
+        Extract per-gene weights in the linear decoder.
+
+        Shape is genes by `n_latent`.
+
+        """
+        cols = ["Z_{}".format(i) for i in range(self.n_latent)]
+        var_names = self.adata.var_names
+        loadings = pd.DataFrame(
+            self.module.get_loadings(), index=var_names, columns=cols
+        )
+
+        return loadings

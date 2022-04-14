@@ -45,6 +45,8 @@ class DecoderVELOVI(nn.Module):
         Whether to use batch norm in layers
     use_layer_norm
         Whether to use layer norm in layers
+    linear_decoder
+        Whether to use linear decoder for time
     """
 
     def __init__(
@@ -58,36 +60,24 @@ class DecoderVELOVI(nn.Module):
         use_batch_norm: bool = True,
         use_layer_norm: bool = False,
         dropout_rate: float = 0.0,
+        linear_decoder: bool = False,
         **kwargs,
     ):
         super().__init__()
         self.n_ouput = n_output
+        self.linear_decoder = linear_decoder
         self.rho_first_decoder = FCLayers(
             n_in=n_input,
-            n_out=n_hidden,
+            n_out=n_hidden if not linear_decoder else n_output,
             n_cat_list=n_cat_list,
-            n_layers=n_layers,
+            n_layers=n_layers if not linear_decoder else 1,
             n_hidden=n_hidden,
             dropout_rate=dropout_rate,
             inject_covariates=inject_covariates,
-            use_batch_norm=use_batch_norm,
-            use_layer_norm=use_layer_norm,
+            use_batch_norm=use_batch_norm if not linear_decoder else True,
+            use_layer_norm=use_layer_norm if not linear_decoder else False,
+            use_activation=not linear_decoder,
             **kwargs,
-            # activation_fn=torch.nn.ELU,
-        )
-
-        self.tau_first_decoder = FCLayers(
-            n_in=n_input,
-            n_out=n_hidden,
-            n_cat_list=n_cat_list,
-            n_layers=n_layers,
-            n_hidden=n_hidden,
-            dropout_rate=dropout_rate,
-            inject_covariates=inject_covariates,
-            use_batch_norm=use_batch_norm,
-            use_layer_norm=use_layer_norm,
-            **kwargs,
-            # activatnion_fn=torch.nn.ELU,
         )
 
         self.pi_first_decoder = FCLayers(
@@ -101,7 +91,6 @@ class DecoderVELOVI(nn.Module):
             use_batch_norm=use_batch_norm,
             use_layer_norm=use_layer_norm,
             **kwargs,
-            # activation_fn=torch.nn.ELU,
         )
 
         # categorical pi
@@ -139,8 +128,12 @@ class DecoderVELOVI(nn.Module):
         rho_first = self.rho_first_decoder(z, *cat_list)
         # tau_first = self.tau_first_decoder(z, *cat_list)
 
-        px_rho = self.px_rho_decoder(rho_first)
-        px_tau = self.px_tau_decoder(rho_first)
+        if not self.linear_decoder:
+            px_rho = self.px_rho_decoder(rho_first)
+            px_tau = self.px_tau_decoder(rho_first)
+        else:
+            px_rho = nn.Sigmoid()(rho_first)
+            px_tau = 1 - px_rho
         # cells by genes by 4
         pi_first = self.pi_first_decoder(z, *cat_list)
         px_pi = nn.Softplus()(
@@ -209,6 +202,7 @@ class VELOVAE(BaseModuleClass):
         penalty_scale: float = 0.2,
         alpha_max: float = 5.0,
         dirichlet_concentration: float = 0.25,
+        linear_decoder: bool = False,
     ):
         super().__init__()
         self.n_latent = n_latent
@@ -305,6 +299,7 @@ class VELOVAE(BaseModuleClass):
             use_batch_norm=use_batch_norm_decoder,
             use_layer_norm=use_layer_norm_decoder,
             activation_fn=torch.nn.ReLU,
+            linear_decoder=linear_decoder,
         )
 
     def set_globals(self, train: bool = True):
@@ -680,3 +675,20 @@ class VELOVAE(BaseModuleClass):
             tensor with shape (n_cells, n_genes, n_samples)
         """
         raise NotImplementedError
+
+    @torch.no_grad()
+    def get_loadings(self) -> np.ndarray:
+        """Extract per-gene weights (for each Z, shape is genes by dim(Z)) in the linear decoder."""
+        # This is BW, where B is diag(b) batch norm, W is weight matrix
+        if self.decoder.linear_decoder is False:
+            raise ValueError("Model not trained with linear decoder")
+        w = self.decoder.rho_first_decoder.fc_layers[0][0].weight
+        bn = self.decoder.rho_first_decoder.fc_layers[0][1]
+        sigma = torch.sqrt(bn.running_var + bn.eps)
+        gamma = bn.weight
+        b = gamma / sigma
+        b_identity = torch.diag(b)
+        loadings = torch.matmul(b_identity, w)
+        loadings = loadings.detach().cpu().numpy()
+
+        return loadings
