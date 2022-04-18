@@ -103,6 +103,9 @@ class DecoderVELOVI(nn.Module):
         # tau for repression
         self.px_tau_decoder = nn.Sequential(nn.Linear(n_hidden, n_output), nn.Sigmoid())
 
+        self.linear_scaling_tau = nn.Parameter(torch.zeros(n_output))
+        self.linear_scaling_tau_intercept = nn.Parameter(torch.zeros(n_output))
+
     def forward(self, z: torch.Tensor, *cat_list: int):
         """
         The forward computation for a single sample.
@@ -133,7 +136,11 @@ class DecoderVELOVI(nn.Module):
             px_tau = self.px_tau_decoder(rho_first)
         else:
             px_rho = nn.Sigmoid()(rho_first)
-            px_tau = 1 - px_rho
+            px_tau = 1 - nn.Sigmoid()(
+                rho_first * self.linear_scaling_tau.exp()
+                + self.linear_scaling_tau_intercept
+            )
+            # px_tau = 1 - px_rho
         # cells by genes by 4
         pi_first = self.pi_first_decoder(z, *cat_list)
         px_pi = nn.Softplus()(
