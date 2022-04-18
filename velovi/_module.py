@@ -634,14 +634,14 @@ class VELOVAE(BaseModuleClass):
 
         return mixture_dist_s, mixture_dist_u, end_penalty
 
-    def _get_induction_unspliced_spliced(self, alpha, beta, gamma, t, eps=1e-6):
+    def _get_induction_unspliced_spliced(self, alpha, beta, gamma, t, eps=1e-3):
         unspliced = (alpha / beta) * (1 - torch.exp(-beta * t))
         spliced = (alpha / gamma) * (1 - torch.exp(-gamma * t)) + (
             alpha / ((gamma - beta) + eps)
         ) * (torch.exp(-gamma * t) - torch.exp(-beta * t))
         return unspliced, spliced
 
-    def _get_repression_unspliced_spliced(self, u_0, s_0, beta, gamma, t, eps=1e-6):
+    def _get_repression_unspliced_spliced(self, u_0, s_0, beta, gamma, t, eps=1e-3):
         unspliced = torch.exp(-beta * t) * u_0
         spliced = s_0 * torch.exp(-gamma * t) - (
             beta * u_0 / ((gamma - beta) + eps)
