@@ -23,6 +23,7 @@ def test_velovi():
     model = VELOVI(adata, n_latent=n_latent, linear_decoder=True)
     model.train(1, train_size=0.5)
     model.get_loadings()
+    model.get_variance_explained(labels_key="labels")
 
     model.history
 

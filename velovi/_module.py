@@ -106,7 +106,7 @@ class DecoderVELOVI(nn.Module):
         self.linear_scaling_tau = nn.Parameter(torch.zeros(n_output))
         self.linear_scaling_tau_intercept = nn.Parameter(torch.zeros(n_output))
 
-    def forward(self, z: torch.Tensor, *cat_list: int):
+    def forward(self, z: torch.Tensor, latent_dim: int = None):
         """
         The forward computation for a single sample.
 
@@ -127,8 +127,13 @@ class DecoderVELOVI(nn.Module):
             parameters for the ZINB distribution of expression
 
         """
+        z_in = z
+        if latent_dim is not None:
+            mask = torch.zeros_like(z)
+            mask[..., latent_dim] = 1
+            z_in = z * mask
         # The decoder returns values for the parameters of the ZINB distribution
-        rho_first = self.rho_first_decoder(z, *cat_list)
+        rho_first = self.rho_first_decoder(z_in)
         # tau_first = self.tau_first_decoder(z, *cat_list)
 
         if not self.linear_decoder:
@@ -142,7 +147,7 @@ class DecoderVELOVI(nn.Module):
             )
             # px_tau = 1 - px_rho
         # cells by genes by 4
-        pi_first = self.pi_first_decoder(z, *cat_list)
+        pi_first = self.pi_first_decoder(z)
         px_pi = nn.Softplus()(
             torch.reshape(self.px_pi_decoder(pi_first), (z.shape[0], self.n_ouput, 4))
         )
@@ -402,20 +407,10 @@ class VELOVAE(BaseModuleClass):
         return gamma, beta, alpha
 
     @auto_move_data
-    def generative(
-        self,
-        z,
-        spliced,
-        unspliced,
-        gamma,
-        beta,
-        alpha,
-    ):
+    def generative(self, z, spliced, unspliced, gamma, beta, alpha, latent_dim=None):
         """Runs the generative model."""
         decoder_input = z
-        px_pi_alpha, px_rho, px_tau = self.decoder(
-            decoder_input,
-        )
+        px_pi_alpha, px_rho, px_tau = self.decoder(decoder_input, latent_dim=latent_dim)
         px_pi = Dirichlet(px_pi_alpha).rsample()
         # px_pi = px_pi_alpha / px_pi_alpha.sum(dim=-1, keepdim=True)
 

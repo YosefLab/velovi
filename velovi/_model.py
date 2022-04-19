@@ -668,6 +668,7 @@ class VELOVI(VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
         gene_list: Optional[Sequence[str]] = None,
         n_samples: int = 1,
         batch_size: Optional[int] = None,
+        restrict_to_latent_dim: Optional[int] = None,
         return_mean: bool = True,
         return_numpy: Optional[bool] = None,
     ) -> Union[np.ndarray, pd.DataFrame]:
@@ -745,6 +746,7 @@ class VELOVI(VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
                 inference_outputs, generative_outputs = self.module.forward(
                     tensors=tensors,
                     compute_loss=False,
+                    generative_kwargs=dict(latent_dim=restrict_to_latent_dim),
                 )
 
                 gamma = inference_outputs["gamma"]
@@ -1194,3 +1196,55 @@ class VELOVI(VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
         )
 
         return loadings
+
+    def get_variance_explained(
+        self,
+        adata: Optional[AnnData] = None,
+        labels_key: Optional[str] = None,
+        n_samples: int = 10,
+    ) -> pd.DataFrame:
+
+        adata = self._validate_anndata(adata)
+        adata_manager = self.get_anndata_manager(adata)
+        n_latent = self.module.n_latent
+
+        if labels_key is not None:
+            groups = np.unique(adata.obs[labels_key])
+        else:
+            groups = [None]
+
+        spliced = adata_manager.get_from_registry(REGISTRY_KEYS.X_KEY)
+        unspliced = adata_manager.get_from_registry(REGISTRY_KEYS.U_KEY)
+
+        def r_squared(true_s, pred_s, true_u, pred_u):
+            rss_s = np.sum((true_s - pred_s) ** 2)
+            tss_s = np.sum((true_s - np.mean(true_s, axis=0)) ** 2)
+            rss_u = np.sum((true_u - pred_u) ** 2)
+            tss_u = np.sum((true_u - np.mean(true_u, axis=0)) ** 2)
+
+            return (1 - (rss_s + rss_u) / (tss_s + tss_u)) * 100
+
+        df_out = pd.DataFrame(
+            data=np.zeros((n_latent, len(groups))),
+            index=[f"Z_{i}" for i in range(n_latent)],
+            columns=groups if groups[0] is not None else ["0"],
+        )
+
+        for i in range(n_latent):
+            fitted_s, fitted_u = self.get_expression_fit(
+                adata, restrict_to_latent_dim=i, n_samples=n_samples, return_numpy=True
+            )
+            for j, g in enumerate(groups):
+                if g is None:
+                    subset = slice(None)
+                else:
+                    subset = adata.obs[labels_key] == g
+                r_2 = r_squared(
+                    spliced[subset],
+                    fitted_s[subset],
+                    unspliced[subset],
+                    fitted_u[subset],
+                )
+                df_out.iloc[i, j] = r_2
+
+        return df_out
