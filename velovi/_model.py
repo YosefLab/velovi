@@ -1222,7 +1222,7 @@ class VELOVI(VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
             rss_u = np.sum((true_u - pred_u) ** 2)
             tss_u = np.sum((true_u - np.mean(true_u, axis=0)) ** 2)
 
-            return (1 - (rss_s + rss_u) / (tss_s + tss_u)) * 100
+            return (1 - ((rss_s + rss_u) / (tss_s + tss_u))) * 100
 
         df_out = pd.DataFrame(
             data=np.zeros((n_latent, len(groups))),

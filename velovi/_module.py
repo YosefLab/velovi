@@ -74,9 +74,10 @@ class DecoderVELOVI(nn.Module):
             n_hidden=n_hidden,
             dropout_rate=dropout_rate,
             inject_covariates=inject_covariates,
-            use_batch_norm=use_batch_norm if not linear_decoder else True,
+            use_batch_norm=use_batch_norm,
             use_layer_norm=use_layer_norm if not linear_decoder else False,
             use_activation=not linear_decoder,
+            bias=not linear_decoder,
             **kwargs,
         )
 
@@ -285,6 +286,7 @@ class VELOVAE(BaseModuleClass):
         use_batch_norm_decoder = use_batch_norm == "decoder" or use_batch_norm == "both"
         use_layer_norm_encoder = use_layer_norm == "encoder" or use_layer_norm == "both"
         use_layer_norm_decoder = use_layer_norm == "decoder" or use_layer_norm == "both"
+        self.use_batch_norm_decoder = use_batch_norm_decoder
 
         # z encoder goes from the n_input-dimensional data to an n_latent-d
         # latent space representation
@@ -685,12 +687,15 @@ class VELOVAE(BaseModuleClass):
         if self.decoder.linear_decoder is False:
             raise ValueError("Model not trained with linear decoder")
         w = self.decoder.rho_first_decoder.fc_layers[0][0].weight
-        bn = self.decoder.rho_first_decoder.fc_layers[0][1]
-        sigma = torch.sqrt(bn.running_var + bn.eps)
-        gamma = bn.weight
-        b = gamma / sigma
-        b_identity = torch.diag(b)
-        loadings = torch.matmul(b_identity, w)
+        if self.use_batch_norm_decoder:
+            bn = self.decoder.rho_first_decoder.fc_layers[0][1]
+            sigma = torch.sqrt(bn.running_var + bn.eps)
+            gamma = bn.weight
+            b = gamma / sigma
+            b_identity = torch.diag(b)
+            loadings = torch.matmul(b_identity, w)
+        else:
+            loadings = w
         loadings = loadings.detach().cpu().numpy()
 
         return loadings
