@@ -1216,13 +1216,16 @@ class VELOVI(VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
         spliced = adata_manager.get_from_registry(REGISTRY_KEYS.X_KEY)
         unspliced = adata_manager.get_from_registry(REGISTRY_KEYS.U_KEY)
 
-        def r_squared(true_s, pred_s, true_u, pred_u):
-            rss_s = np.sum((true_s - pred_s) ** 2)
-            tss_s = np.sum((true_s - np.mean(true_s, axis=0)) ** 2)
-            rss_u = np.sum((true_u - pred_u) ** 2)
-            tss_u = np.sum((true_u - np.mean(true_u, axis=0)) ** 2)
+        centered_s = spliced - spliced.mean(0)
+        centered_u = unspliced - unspliced.mean(0)
 
-            return (1 - ((rss_s + rss_u) / (tss_s + tss_u))) * 100
+        def r_squared(true_s, pred_s, true_u, pred_u, centered_s, centered_u):
+            rss_s = np.sum((true_s - pred_s) ** 2)
+            tss_s = np.sum(centered_s**2)
+            rss_u = np.sum((true_u - pred_u) ** 2)
+            tss_u = np.sum(centered_u**2)
+
+            return (1 - (rss_s + rss_u) / (tss_s + tss_u)) * 100
 
         df_out = pd.DataFrame(
             data=np.zeros((n_latent, len(groups))),
@@ -1244,6 +1247,8 @@ class VELOVI(VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
                     fitted_s[subset],
                     unspliced[subset],
                     fitted_u[subset],
+                    centered_s[subset],
+                    centered_u[subset],
                 )
                 df_out.iloc[i, j] = r_2
 
