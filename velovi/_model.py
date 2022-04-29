@@ -400,10 +400,9 @@ class VELOVI(VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
                 )
                 pi = generative_outputs["px_pi"]
                 ind_prob = pi[..., 0]
-                # steady_prob = pi[..., 1]
+                steady_prob = pi[..., 1]
                 rep_prob = pi[..., 2]
-                # rep_steady_prob = pi[..., 3]
-                # renormalize
+                rep_steady_prob = pi[..., 3]
                 switch_time = F.softplus(self.module.switch_time_unconstr)
 
                 # clamped = torch.ones_like(generative_outputs["px_rho"])
@@ -427,14 +426,11 @@ class VELOVI(VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
                 # output = ind_time
                 # expectation
                 if time_statistic == "mean":
-                    sum_prob = ind_prob + rep_prob
-                    ind_prob /= sum_prob
-                    rep_prob /= sum_prob
                     output = (
                         ind_prob * ind_time
                         + rep_prob * rep_time
-                        # + steady_prob * switch_time
-                        # + rep_steady_prob * self.module.t_max
+                        + steady_prob * switch_time
+                        + rep_steady_prob * self.module.t_max
                     )
                 else:
                     t = torch.stack(
