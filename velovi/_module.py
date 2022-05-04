@@ -355,8 +355,6 @@ class VELOVAE(BaseModuleClass):
 
         input_dict = {
             "z": z,
-            "spliced": tensors[REGISTRY_KEYS.X_KEY],
-            "unspliced": tensors[REGISTRY_KEYS.U_KEY],
             "gamma": gamma,
             "beta": beta,
             "alpha": alpha,
@@ -409,7 +407,7 @@ class VELOVAE(BaseModuleClass):
         return gamma, beta, alpha
 
     @auto_move_data
-    def generative(self, z, spliced, unspliced, gamma, beta, alpha, latent_dim=None):
+    def generative(self, z, gamma, beta, alpha, latent_dim=None):
         """Runs the generative model."""
         decoder_input = z
         px_pi_alpha, px_rho, px_tau = self.decoder(decoder_input, latent_dim=latent_dim)

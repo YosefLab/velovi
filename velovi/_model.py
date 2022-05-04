@@ -13,6 +13,7 @@ from scvi._compat import Literal
 from scvi._utils import _doc_params
 from scvi.data import AnnDataManager
 from scvi.data.fields import LayerField
+from scvi.dataloaders import AnnDataLoader
 from scvi.model._utils import scrna_raw_counts_properties
 from scvi.model.base import BaseModelClass, UnsupervisedTrainingMixin, VAEMixin
 from scvi.model.base._utils import _de_core
@@ -652,6 +653,132 @@ class VELOVI(VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
                 velos,
                 columns=adata.var_names[gene_mask],
                 index=adata.obs_names[indices],
+            )
+        else:
+            return velos
+
+    @torch.no_grad()
+    def get_velocity_from_latent(
+        self,
+        latent_representation: np.ndarray,
+        return_numpy: Optional[bool] = None,
+        velo_statistic: str = "mean",
+        velo_mode: Literal["spliced", "unspliced"] = "spliced",
+        clip: bool = True,
+    ) -> Union[np.ndarray, pd.DataFrame]:
+        r"""
+        Returns the normalized (decoded) gene expression.
+
+        This is denoted as :math:`\rho_n` in the scVI paper.
+
+        Parameters
+        ----------
+        adata
+            AnnData object with equivalent structure to initial AnnData. If `None`, defaults to the
+            AnnData object used to initialize the model.
+        return_numpy
+            Return a :class:`~numpy.ndarray` instead of a :class:`~pandas.DataFrame`. DataFrame includes
+            gene names as columns. If either `n_samples=1` or `return_mean=True`, defaults to `False`.
+            Otherwise, it defaults to `True`.
+        clip
+            Clip to minus spliced value
+
+        Returns
+        -------
+        If `n_samples` > 1 and `return_mean` is False, then the shape is `(samples, cells, genes)`.
+        Otherwise, shape is `(cells, genes)`. In this case, return type is :class:`~pandas.DataFrame` unless `return_numpy` is True.
+        """
+        adata = AnnData(latent_representation)
+        data_key = "Z"
+        manager = AnnDataManager(
+            [LayerField(data_key, layer=None, is_count_data=False)]
+        )
+        manager.register_fields(adata)
+        scdl = AnnDataLoader(manager)
+
+        gamma, beta, alpha = self.module._get_rates()
+
+        velos = []
+        for tensors in scdl:
+            z = tensors[data_key]
+            generative_outputs = self.module.generative(
+                z=z,
+                gamma=gamma,
+                beta=beta,
+                alpha=alpha,
+            )
+            pi = generative_outputs["px_pi"]
+            tau = generative_outputs["px_tau"]
+            rho = generative_outputs["px_rho"]
+
+            ind_prob = pi[..., 0]
+            steady_prob = pi[..., 1]
+            rep_prob = pi[..., 2]
+            switch_time = F.softplus(self.module.switch_time_unconstr)
+
+            ind_time = switch_time * rho
+            u_0, s_0 = self.module._get_induction_unspliced_spliced(
+                alpha, beta, gamma, switch_time
+            )
+            rep_time = (self.module.t_max - switch_time) * tau
+            mean_u_rep, mean_s_rep = self.module._get_repression_unspliced_spliced(
+                u_0,
+                s_0,
+                beta,
+                gamma,
+                rep_time,
+            )
+            if velo_mode == "spliced":
+                velo_rep = beta * mean_u_rep - gamma * mean_s_rep
+            else:
+                velo_rep = -beta * mean_u_rep
+            mean_u_ind, mean_s_ind = self.module._get_induction_unspliced_spliced(
+                alpha, beta, gamma, ind_time
+            )
+            if velo_mode == "spliced":
+                velo_ind = beta * mean_u_ind - gamma * mean_s_ind
+            else:
+                velo_ind = alpha - beta * mean_u_ind
+
+            if velo_mode == "spliced":
+                # velo_steady = beta * u_0 - gamma * s_0
+                velo_steady = torch.zeros_like(velo_ind)
+            else:
+                # velo_steady = alpha - beta * u_0
+                velo_steady = torch.zeros_like(velo_ind)
+
+            # expectation
+            if velo_statistic == "mean":
+                output = (
+                    ind_prob * velo_ind
+                    + rep_prob * velo_rep
+                    + steady_prob * velo_steady
+                )
+            # maximum
+            else:
+                v = torch.stack(
+                    [
+                        velo_ind,
+                        velo_steady.expand(velo_ind.shape),
+                        velo_rep,
+                        torch.zeros_like(velo_rep),
+                    ],
+                    dim=2,
+                )
+                max_prob = torch.amax(pi, dim=-1)
+                max_prob = torch.stack([max_prob] * 4, dim=2)
+                max_prob_mask = pi.ge(max_prob)
+                output = (v * max_prob_mask).sum(dim=-1)
+
+            # samples by cells by genes
+            velos.append(output.cpu().numpy())
+
+        velos = np.concatenate(velos, axis=0)
+
+        if return_numpy is None or return_numpy is False:
+            return pd.DataFrame(
+                velos,
+                columns=self.adata.var_names,
             )
         else:
             return velos
