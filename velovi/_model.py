@@ -60,7 +60,7 @@ class VELOVI(VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
         n_latent: int = 10,
         n_layers: int = 1,
         dropout_rate: float = 0.1,
-        random_gamma_init: bool = False,
+        gamma_init_data: bool = False,
         induction_genes: Optional[Iterable[str]] = None,
         linear_decoder: bool = False,
         **model_kwargs,
@@ -87,7 +87,7 @@ class VELOVI(VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
         alpha_unconstr = _softplus_inverse(us_upper)
         alpha_unconstr = np.asarray(alpha_unconstr).ravel()
 
-        if not random_gamma_init:
+        if gamma_init_data:
             gamma_unconstr = np.clip(_softplus_inverse(us_upper / ms_upper), None, 10)
         else:
             gamma_unconstr = None
