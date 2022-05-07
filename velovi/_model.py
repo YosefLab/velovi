@@ -8,7 +8,6 @@ import pandas as pd
 import torch
 import torch.nn.functional as F
 from anndata import AnnData
-from scipy.sparse import isspmatrix
 from scvi._compat import Literal
 from scvi._utils import _doc_params
 from scvi.data import AnnDataManager
@@ -24,6 +23,12 @@ from ._constants import REGISTRY_KEYS
 from ._module import VELOVAE
 
 logger = logging.getLogger(__name__)
+
+
+def _softplus_inverse(x: np.ndarray) -> np.ndarray:
+    x = torch.from_numpy(x)
+    x_inv = torch.where(x > 20, x, x.expm1().log()).numpy()
+    return x_inv
 
 
 class VELOVI(VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
@@ -55,7 +60,7 @@ class VELOVI(VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
         n_latent: int = 10,
         n_layers: int = 1,
         dropout_rate: float = 0.1,
-        gamma_var_key: Optional[str] = None,
+        random_gamma_init: bool = False,
         induction_genes: Optional[Iterable[str]] = None,
         linear_decoder: bool = False,
         **model_kwargs,
@@ -79,22 +84,13 @@ class VELOVI(VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
         us_upper = np.median(np.concatenate(us_upper, axis=0), axis=0)
         ms_upper = np.median(np.concatenate(ms_upper, axis=0), axis=0)
 
-        y = torch.from_numpy(us_upper)
-        log_alpha_init = torch.where(y > 20, y, y.expm1().log()).numpy()
-        # log_alpha_init = log_alpha_init.mean(0)  # + log_alpha_init.std(0)
-        if isspmatrix(log_alpha_init):
-            log_alpha_init = log_alpha_init.A
-        log_alpha_init = np.asarray(log_alpha_init).ravel()
+        alpha_unconstr = _softplus_inverse(us_upper)
+        alpha_unconstr = np.asarray(alpha_unconstr).ravel()
 
-        if gamma_var_key is not None:
-            # log_gamma = np.log(np.exp(adata.var[gamma_var_key].values) - 1)
-            y = torch.from_numpy(us_upper / ms_upper)
-            log_gamma = torch.where(y > 20, y, y.expm1().log()).numpy()
+        if not random_gamma_init:
+            gamma_unconstr = _softplus_inverse(us_upper / ms_upper)
         else:
-            log_gamma = None
-
-        # ms_upper = np.percentile(spliced, 99, axis=0)
-        # us_upper = np.percentile(unspliced, 99, axis=0)
+            gamma_unconstr = None
 
         if induction_genes is not None:
             induction_gene_mask = pd.Series(
@@ -111,8 +107,8 @@ class VELOVI(VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
             n_latent=n_latent,
             n_layers=n_layers,
             dropout_rate=dropout_rate,
-            log_gamma_init=log_gamma,
-            log_alpha_init=log_alpha_init,
+            gamma_unconstr_init=gamma_unconstr,
+            alpha_unconstr_init=alpha_unconstr,
             switch_spliced=ms_upper,
             switch_unspliced=us_upper,
             induction_gene_mask=induction_gene_mask,

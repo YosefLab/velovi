@@ -135,7 +135,6 @@ class DecoderVELOVI(nn.Module):
             z_in = z * mask
         # The decoder returns values for the parameters of the ZINB distribution
         rho_first = self.rho_first_decoder(z_in)
-        # tau_first = self.tau_first_decoder(z, *cat_list)
 
         if not self.linear_decoder:
             px_rho = self.px_rho_decoder(rho_first)
@@ -146,7 +145,7 @@ class DecoderVELOVI(nn.Module):
                 rho_first * self.linear_scaling_tau.exp()
                 + self.linear_scaling_tau_intercept
             )
-            # px_tau = 1 - px_rho
+
         # cells by genes by 4
         pi_first = self.pi_first_decoder(z)
         px_pi = nn.Softplus()(
@@ -206,8 +205,8 @@ class VELOVAE(BaseModuleClass):
         use_observed_lib_size: bool = True,
         var_activation: Optional[Callable] = torch.nn.Softplus(),
         model_steady_states: bool = True,
-        log_gamma_init: Optional[np.ndarray] = None,
-        log_alpha_init: Optional[np.ndarray] = None,
+        gamma_unconstr_init: Optional[np.ndarray] = None,
+        alpha_unconstr_init: Optional[np.ndarray] = None,
         switch_spliced: Optional[np.ndarray] = None,
         switch_unspliced: Optional[np.ndarray] = None,
         induction_gene_mask: Optional[np.ndarray] = None,
@@ -254,29 +253,24 @@ class VELOVAE(BaseModuleClass):
             self.true_time_switch = None
 
         # degradation
-        if log_gamma_init is None:
+        if gamma_unconstr_init is None:
             self.gamma_mean_unconstr = torch.nn.Parameter(-1 * torch.ones(n_input))
         else:
             self.gamma_mean_unconstr = torch.nn.Parameter(
-                torch.from_numpy(log_gamma_init)
+                torch.from_numpy(gamma_unconstr_init)
             )
-
-        self.gamma_mean_prior_unconstr = torch.nn.Parameter(-1 * torch.ones(1))
-        self.gamma_var_prior_unconstr = torch.nn.Parameter(3 * torch.ones(1))
 
         # splicing
         # first samples around 1
         self.beta_mean_unconstr = torch.nn.Parameter(0.5 * torch.ones(n_input))
 
-        self.beta_mean_prior_unconstr = torch.nn.Parameter(0 * torch.ones(1))
-        self.beta_var_prior_unconstr = torch.nn.Parameter(3 * torch.ones(1))
-
         # transcription
-        if log_alpha_init is None:
+        if alpha_unconstr_init is None:
             self.alpha_unconstr = torch.nn.Parameter(0 * torch.ones(n_input))
         else:
-            self.alpha_unconstr = torch.nn.Parameter(torch.from_numpy(log_alpha_init))
-        # self.alpha_unconstr.requires_grad = False
+            self.alpha_unconstr = torch.nn.Parameter(
+                torch.from_numpy(alpha_unconstr_init)
+            )
 
         # likelihood dispersion
         # for now, with normal dist, this is just the variance
@@ -315,27 +309,6 @@ class VELOVAE(BaseModuleClass):
             activation_fn=torch.nn.ReLU,
             linear_decoder=linear_decoder,
         )
-
-    def set_globals(self, train: bool = True):
-
-        if train is not True:
-            self.beta_mean_unconstr.requires_grad = False
-            self.beta_mean_prior_unconstr.requires_grad = False
-            self.beta_var_prior_unconstr.requires_grad = False
-            self.alpha_unconstr.requires_grad = False
-            self.gamma_mean_unconstr.requires_grad = False
-            self.gamma_mean_prior_unconstr.requires_grad = False
-            self.gamma_var_prior_unconstr.requires_grad = False
-            # self.switch_time_unconstr.requires_grad = False
-        else:
-            self.beta_mean_unconstr.requires_grad = True
-            self.beta_mean_prior_unconstr.requires_grad = True
-            self.beta_var_prior_unconstr.requires_grad = True
-            self.alpha_unconstr.requires_grad = True
-            self.gamma_mean_unconstr.requires_grad = True
-            self.gamma_mean_prior_unconstr.requires_grad = True
-            self.gamma_var_prior_unconstr.requires_grad = True
-            # self.switch_time_unconstr.requires_grad = True
 
     def _get_inference_input(self, tensors):
         spliced = tensors[REGISTRY_KEYS.X_KEY]
@@ -412,10 +385,6 @@ class VELOVAE(BaseModuleClass):
         decoder_input = z
         px_pi_alpha, px_rho, px_tau = self.decoder(decoder_input, latent_dim=latent_dim)
         px_pi = Dirichlet(px_pi_alpha).rsample()
-        # px_pi = px_pi_alpha / px_pi_alpha.sum(dim=-1, keepdim=True)
-
-        # additional constraint
-        # px_tau = 1 - px_rho
 
         scale_unconstr = self.scale_unconstr
         scale = F.softplus(scale_unconstr)
@@ -486,7 +455,6 @@ class VELOVAE(BaseModuleClass):
                 Dirichlet(px_pi_alpha),
                 Dirichlet(self.dirichlet_concentration * torch.ones_like(px_pi)),
             ).sum(dim=-1)
-        # kl_pi = 0
 
         # local loss
         kl_local = kl_divergence_z + kl_pi
@@ -495,27 +463,7 @@ class VELOVAE(BaseModuleClass):
         local_loss = torch.mean(reconst_loss + weighted_kl_local)
 
         # combine local and global
-        global_ll = (
-            -Normal(
-                self.gamma_mean_prior_unconstr,
-                F.softplus(self.gamma_var_prior_unconstr).sqrt(),
-            )
-            .log_prob(self.gamma_mean_unconstr)
-            .sum()
-        )
-        global_ll += (
-            -Normal(
-                self.beta_mean_prior_unconstr,
-                F.softplus(self.beta_var_prior_unconstr).sqrt(),
-            )
-            .log_prob(self.beta_mean_unconstr)
-            .sum()
-        )
-
-        # global_loss = global_ll
         global_loss = 0
-        # global_penalty = ((beta / gamma) - 1).pow(2).sum()
-        # global_loss += global_penalty
         loss = (
             local_loss
             + self.penalty_scale * (1 - kl_weight) * end_penalty
@@ -551,20 +499,12 @@ class VELOVAE(BaseModuleClass):
         mean_u_ind, mean_s_ind = self._get_induction_unspliced_spliced(
             alpha, beta, gamma, t_s * px_rho
         )
-        mean_u_ind_steady = torch.clamp(
-            (alpha / beta).expand(n_cells, self.n_input), 0, 1000
-        )
-        mean_s_ind_steady = torch.clamp(
-            (alpha / gamma).expand(n_cells, self.n_input), 0, 1000
-        )
+        mean_u_ind_steady = (alpha / beta).expand(n_cells, self.n_input)
+        mean_s_ind_steady = (alpha / gamma).expand(n_cells, self.n_input)
         scale_u = scale[: self.n_input, :].expand(n_cells, self.n_input, 4).sqrt()
 
         # repression
         u_0, s_0 = self._get_induction_unspliced_spliced(alpha, beta, gamma, t_s)
-        u_0 = torch.clamp(u_0, 0, 1000)
-        s_0 = torch.clamp(s_0, 0, 1000)
-        # mean_u_ind_steady = u_0.expand(n_cells, self.n_input)
-        # mean_s_ind_steady = s_0.expand(n_cells, self.n_input)
 
         tau = px_tau
         mean_u_rep, mean_s_rep = self._get_repression_unspliced_spliced(
@@ -578,22 +518,9 @@ class VELOVAE(BaseModuleClass):
         mean_s_rep_steady = torch.zeros_like(mean_u_ind)
         scale_s = scale[self.n_input :, :].expand(n_cells, self.n_input, 4).sqrt()
 
-        # end time penalty
-        mean_u_rep_end, mean_s_rep_end = self._get_repression_unspliced_spliced(
-            u_0, s_0, beta, gamma, (self.t_max - t_s)
-        )
-        # make time t=20 close to 0
-        # end_penalty = mean_u_rep_end.pow(2).sum() + mean_s_rep_end.pow(2).sum()
-        # end_penalty = 0
-        # make switch time close to steady state
         end_penalty = ((u_0 - self.switch_unspliced).pow(2)).sum() + (
             (s_0 - self.switch_spliced).pow(2)
         ).sum()
-
-        # make steady state close to switch time
-        # end_penalty = ((mean_u_ind_steady[0] - self.switch_unspliced).pow(2)).sum() + (
-        #     (mean_s_ind_steady[0] - self.switch_spliced).pow(2)
-        # ).sum()
 
         # unspliced
         mean_u = torch.stack(
@@ -650,32 +577,10 @@ class VELOVAE(BaseModuleClass):
         ) * (torch.exp(-gamma * t) - torch.exp(-beta * t))
         return unspliced, spliced
 
-    @torch.no_grad()
     def sample(
         self,
-        tensors,
-        n_samples=1,
-        library_size=1,
     ) -> np.ndarray:
-        r"""
-        Generate observation samples from the posterior predictive distribution.
-
-        The posterior predictive distribution is written as :math:`p(\hat{x} \mid x)`.
-
-        Parameters
-        ----------
-        tensors
-            Tensors dict
-        n_samples
-            Number of required samples for each cell
-        library_size
-            Library size to scale scamples to
-
-        Returns
-        -------
-        x_new : :py:class:`torch.Tensor`
-            tensor with shape (n_cells, n_genes, n_samples)
-        """
+        """Not implemented."""
         raise NotImplementedError
 
     @torch.no_grad()
