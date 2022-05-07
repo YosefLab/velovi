@@ -88,7 +88,7 @@ class VELOVI(VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
         alpha_unconstr = np.asarray(alpha_unconstr).ravel()
 
         if not random_gamma_init:
-            gamma_unconstr = _softplus_inverse(us_upper / ms_upper)
+            gamma_unconstr = np.clip(_softplus_inverse(us_upper / ms_upper), None, 10)
         else:
             gamma_unconstr = None
 
