@@ -13,10 +13,11 @@ from scvi._compat import Literal
 from scvi._utils import _doc_params
 from scvi.data import AnnDataManager
 from scvi.data.fields import LayerField
-from scvi.dataloaders import AnnDataLoader
+from scvi.dataloaders import AnnDataLoader, DataSplitter
 from scvi.model._utils import scrna_raw_counts_properties
 from scvi.model.base import BaseModelClass, UnsupervisedTrainingMixin, VAEMixin
 from scvi.model.base._utils import _de_core
+from scvi.train import TrainingPlan, TrainRunner
 from scvi.utils._docstrings import doc_differential_expression, setup_anndata_dsp
 from sklearn.metrics.pairwise import cosine_similarity
 
@@ -59,8 +60,8 @@ class VELOVI(VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
     def __init__(
         self,
         adata: AnnData,
-        n_hidden: int = 128,
-        n_latent: int = 10,
+        n_hidden: int = 256,
+        n_latent: int = 15,
         n_layers: int = 1,
         dropout_rate: float = 0.1,
         gamma_init_data: bool = False,
@@ -117,6 +118,80 @@ class VELOVI(VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
             dropout_rate,
         )
         self.init_params_ = self._get_init_params(locals())
+
+    def train(
+        self,
+        max_epochs: Optional[int] = 500,
+        use_gpu: Optional[Union[str, int, bool]] = None,
+        train_size: float = 0.9,
+        validation_size: Optional[float] = None,
+        batch_size: int = 256,
+        early_stopping: bool = True,
+        plan_kwargs: Optional[dict] = None,
+        gradient_clip_val: float = 10,
+        **trainer_kwargs,
+    ):
+        """
+        Train the model.
+
+        Parameters
+        ----------
+        max_epochs
+            Number of passes through the dataset. If `None`, defaults to
+            `np.min([round((20000 / n_cells) * 400), 400])`
+        use_gpu
+            Use default GPU if available (if None or True), or index of GPU to use (if int),
+            or name of GPU (if str, e.g., `'cuda:0'`), or use CPU (if False).
+        train_size
+            Size of training set in the range [0.0, 1.0].
+        validation_size
+            Size of the test set. If `None`, defaults to 1 - `train_size`. If
+            `train_size + validation_size < 1`, the remaining cells belong to a test set.
+        batch_size
+            Minibatch size to use during training.
+        early_stopping
+            Perform early stopping. Additional arguments can be passed in `**kwargs`.
+            See :class:`~scvi.train.Trainer` for further options.
+        plan_kwargs
+            Keyword args for :class:`~scvi.train.TrainingPlan`. Keyword arguments passed to
+            `train()` will overwrite values present in `plan_kwargs`, when appropriate.
+        gradient_clip_val
+            Val for gradient clipping
+        **trainer_kwargs
+            Other keyword args for :class:`~scvi.train.Trainer`.
+        """
+        user_plan_kwargs = (
+            plan_kwargs.copy() if isinstance(plan_kwargs, dict) else dict()
+        )
+        plan_kwargs = dict(lr=1e-2, weight_decay=1e-2, optimizer="AdamW")
+        plan_kwargs.update(user_plan_kwargs)
+
+        user_train_kwargs = trainer_kwargs.copy()
+        trainer_kwargs = dict(gradient_clip_val=gradient_clip_val)
+        trainer_kwargs.update(user_train_kwargs)
+
+        data_splitter = DataSplitter(
+            self.adata_manager,
+            train_size=train_size,
+            validation_size=validation_size,
+            batch_size=batch_size,
+            use_gpu=use_gpu,
+        )
+        training_plan = TrainingPlan(self.module, **plan_kwargs)
+
+        es = "early_stopping"
+        trainer_kwargs[es] = (
+            early_stopping if es not in trainer_kwargs.keys() else trainer_kwargs[es]
+        )
+        runner = TrainRunner(
+            self,
+            training_plan=training_plan,
+            data_splitter=data_splitter,
+            max_epochs=max_epochs,
+            use_gpu=use_gpu,
+            **trainer_kwargs,
+        )
+        return runner()
 
     @torch.no_grad()
     def get_state_assignment(

@@ -211,7 +211,6 @@ class VELOVAE(BaseModuleClass):
         switch_unspliced: Optional[np.ndarray] = None,
         t_max: float = 20,
         penalty_scale: float = 0.2,
-        alpha_max: float = 5.0,
         dirichlet_concentration: float = 0.25,
         linear_decoder: bool = False,
     ):
@@ -224,7 +223,6 @@ class VELOVAE(BaseModuleClass):
         self.model_steady_states = model_steady_states
         self.t_max = t_max
         self.penalty_scale = penalty_scale
-        self.alpha_max = alpha_max
         self.dirichlet_concentration = dirichlet_concentration
 
         if switch_spliced is not None:
