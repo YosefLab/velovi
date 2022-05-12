@@ -8,6 +8,7 @@ import pandas as pd
 import torch
 import torch.nn.functional as F
 from anndata import AnnData
+from joblib import Parallel, delayed
 from scvi._compat import Literal
 from scvi._utils import _doc_params
 from scvi.data import AnnDataManager
@@ -47,6 +48,8 @@ class VELOVI(VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
         Number of hidden layers used for encoder and decoder NNs.
     dropout_rate
         Dropout rate for neural networks.
+    gamma_init_data
+        Initialize gamma using the data-driven technique.
     linear_decoder
         Use a linear decoder from latent space to time.
     **model_kwargs
@@ -61,7 +64,6 @@ class VELOVI(VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
         n_layers: int = 1,
         dropout_rate: float = 0.1,
         gamma_init_data: bool = False,
-        induction_genes: Optional[Iterable[str]] = None,
         linear_decoder: bool = False,
         **model_kwargs,
     ):
@@ -92,15 +94,6 @@ class VELOVI(VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
         else:
             gamma_unconstr = None
 
-        if induction_genes is not None:
-            induction_gene_mask = pd.Series(
-                [False] * adata.n_vars, index=adata.var_names
-            )
-            induction_gene_mask.loc[induction_genes] = True
-            induction_gene_mask = induction_gene_mask.values.astype(bool)
-        else:
-            induction_gene_mask = None
-
         self.module = VELOVAE(
             n_input=self.summary_stats["n_vars"],
             n_hidden=n_hidden,
@@ -111,7 +104,6 @@ class VELOVI(VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
             alpha_unconstr_init=alpha_unconstr,
             switch_spliced=ms_upper,
             switch_unspliced=us_upper,
-            induction_gene_mask=induction_gene_mask,
             linear_decoder=linear_decoder,
             **model_kwargs,
         )
@@ -137,11 +129,9 @@ class VELOVI(VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
         batch_size: Optional[int] = None,
         return_mean: bool = True,
         return_numpy: Optional[bool] = None,
-    ) -> Tuple[np.ndarray, List[str]]:
-        r"""
-        Returns the normalized (decoded) gene expression.
-
-        This is denoted as :math:`\rho_n` in the scVI paper.
+    ) -> Tuple[Union[np.ndarray, pd.DataFrame], List[str]]:
+        """
+        Returns cells by genes by states probabilities.
 
         Parameters
         ----------
@@ -230,91 +220,6 @@ class VELOVI(VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
         return states, state_cats
 
     @torch.no_grad()
-    def get_state_entropy(
-        self,
-        adata: Optional[AnnData] = None,
-        indices: Optional[Sequence[int]] = None,
-        gene_list: Optional[Sequence[str]] = None,
-        n_samples: int = 20,
-        batch_size: Optional[int] = None,
-        return_mean: bool = True,
-        return_numpy: Optional[bool] = None,
-    ) -> Tuple[np.ndarray, List[str]]:
-        r"""
-        Returns the normalized (decoded) gene expression.
-
-        This is denoted as :math:`\rho_n` in the scVI paper.
-
-        Parameters
-        ----------
-        adata
-            AnnData object with equivalent structure to initial AnnData. If `None`, defaults to the
-            AnnData object used to initialize the model.
-        indices
-            Indices of cells in adata to use. If `None`, all cells are used.
-        gene_list
-            Return frequencies of expression for a subset of genes.
-            This can save memory when working with large datasets and few genes are
-            of interest.
-        n_samples
-            Number of posterior samples to use for estimation.
-        batch_size
-            Minibatch size for data loading into model. Defaults to `scvi.settings.batch_size`.
-        return_mean
-            Whether to return the mean of the samples.
-        return_numpy
-            Return a :class:`~numpy.ndarray` instead of a :class:`~pandas.DataFrame`. DataFrame includes
-            gene names as columns. If either `n_samples=1` or `return_mean=True`, defaults to `False`.
-            Otherwise, it defaults to `True`.
-
-        Returns
-        -------
-        If `n_samples` > 1 and `return_mean` is False, then the shape is `(samples, cells, genes)`.
-        Otherwise, shape is `(cells, genes)`. In this case, return type is :class:`~pandas.DataFrame` unless `return_numpy` is True.
-        """
-        adata = self._validate_anndata(adata)
-        scdl = self._make_data_loader(
-            adata=adata, indices=indices, batch_size=batch_size
-        )
-
-        if gene_list is None:
-            gene_mask = slice(None)
-        else:
-            all_genes = adata.var_names
-            gene_mask = [True if gene in gene_list else False for gene in all_genes]
-
-        if n_samples > 1 and return_mean is False:
-            if return_numpy is False:
-                warnings.warn(
-                    "return_numpy must be True if n_samples > 1 and return_mean is False, returning np.ndarray"
-                )
-            return_numpy = True
-        if indices is None:
-            indices = np.arange(adata.n_obs)
-
-        states = []
-        for tensors in scdl:
-            minibatch_samples = []
-            for _ in range(n_samples):
-                _, generative_outputs = self.module.forward(
-                    tensors=tensors,
-                    compute_loss=False,
-                )
-                output = torch.distributions.Dirichlet(
-                    generative_outputs["px_pi_alpha"]
-                ).entropy()
-                output = output[..., gene_mask, :]
-                output = output.cpu().numpy()
-                minibatch_samples.append(output)
-            # samples by cells by genes by four
-            states.append(np.stack(minibatch_samples, axis=0))
-            if return_mean:
-                states[-1] = np.mean(states[-1], axis=0)
-
-        states = np.concatenate(states, axis=0)
-        return states
-
-    @torch.no_grad()
     def get_latent_time(
         self,
         adata: Optional[AnnData] = None,
@@ -327,10 +232,8 @@ class VELOVI(VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
         return_mean: bool = True,
         return_numpy: Optional[bool] = None,
     ) -> Union[np.ndarray, pd.DataFrame]:
-        r"""
-        Returns the normalized (decoded) gene expression.
-
-        This is denoted as :math:`\rho_n` in the scVI paper.
+        """
+        Returns the cells by genes latent time.
 
         Parameters
         ----------
@@ -343,12 +246,13 @@ class VELOVI(VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
             Return frequencies of expression for a subset of genes.
             This can save memory when working with large datasets and few genes are
             of interest.
-        library_size
-            Scale the expression frequencies to a common library size.
-            This allows gene expression levels to be interpreted on a common scale of relevant
-            magnitude. If set to `"latent"`, use the latent libary size.
+        time_statistic
+            Whether to compute expected time over states, or maximum a posteriori time over maximal
+            probability state.
         n_samples
             Number of posterior samples to use for estimation.
+        n_samples_overall
+            Number of overall samples to return. Setting this forces n_samples=1.
         batch_size
             Minibatch size for data loading into model. Defaults to `scvi.settings.batch_size`.
         return_mean
@@ -402,26 +306,11 @@ class VELOVI(VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
                 # rep_steady_prob = pi[..., 3]
                 switch_time = F.softplus(self.module.switch_time_unconstr)
 
-                # clamped = torch.ones_like(generative_outputs["px_rho"])
-                # ind_time = torch.clamp(
-                #     generative_outputs["px_rho"], 0 * clamped, switch_time * clamped
-                # )
-
                 ind_time = generative_outputs["px_rho"] * switch_time
                 rep_time = switch_time + (
                     generative_outputs["px_tau"] * (self.module.t_max - switch_time)
                 )
-                # rep_time = switch_time + torch.clamp(
-                #     generative_outputs["px_tau"],
-                #     0 * clamped,
-                #     (self.module.t_max - switch_time) * clamped,
-                # )
 
-                # max
-                # mask = rep_prob > ind_prob
-                # ind_time.masked_scatter(mask, rep_time)
-                # output = ind_time
-                # expectation
                 if time_statistic == "mean":
                     output = (
                         ind_prob * ind_time
@@ -482,10 +371,8 @@ class VELOVI(VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
         velo_mode: Literal["spliced", "unspliced"] = "spliced",
         clip: bool = True,
     ) -> Union[np.ndarray, pd.DataFrame]:
-        r"""
-        Returns the normalized (decoded) gene expression.
-
-        This is denoted as :math:`\rho_n` in the scVI paper.
+        """
+        Returns cells by genes velocity estimates.
 
         Parameters
         ----------
@@ -494,22 +381,14 @@ class VELOVI(VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
             AnnData object used to initialize the model.
         indices
             Indices of cells in adata to use. If `None`, all cells are used.
-        transform_batch
-            Batch to condition on.
-            If transform_batch is:
-
-            - None, then real observed batch is used.
-            - int, then batch transform_batch is used.
         gene_list
-            Return frequencies of expression for a subset of genes.
+            Return velocities for a subset of genes.
             This can save memory when working with large datasets and few genes are
             of interest.
-        library_size
-            Scale the expression frequencies to a common library size.
-            This allows gene expression levels to be interpreted on a common scale of relevant
-            magnitude. If set to `"latent"`, use the latent libary size.
         n_samples
-            Number of posterior samples to use for estimation.
+            Number of posterior samples to use for estimation for each cell.
+        n_samples_overall
+            Number of overall samples to return. Setting this forces n_samples=1.
         batch_size
             Minibatch size for data loading into model. Defaults to `scvi.settings.batch_size`.
         return_mean
@@ -518,6 +397,11 @@ class VELOVI(VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
             Return a :class:`~numpy.ndarray` instead of a :class:`~pandas.DataFrame`. DataFrame includes
             gene names as columns. If either `n_samples=1` or `return_mean=True`, defaults to `False`.
             Otherwise, it defaults to `True`.
+        velo_statistic
+            Whether to compute expected velocity over states, or maximum a posteriori velocity over maximal
+            probability state.
+        velo_mode
+            Compute ds/dt or du/dt.
         clip
             Clip to minus spliced value
 
@@ -531,6 +415,7 @@ class VELOVI(VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
             indices = np.arange(adata.n_obs)
         if n_samples_overall is not None:
             indices = np.random.choice(indices, n_samples_overall)
+            n_samples = 1
         scdl = self._make_data_loader(
             adata=adata, indices=indices, batch_size=batch_size
         )
@@ -787,14 +672,12 @@ class VELOVI(VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
         gene_list: Optional[Sequence[str]] = None,
         n_samples: int = 1,
         batch_size: Optional[int] = None,
-        restrict_to_latent_dim: Optional[int] = None,
         return_mean: bool = True,
         return_numpy: Optional[bool] = None,
+        restrict_to_latent_dim: Optional[int] = None,
     ) -> Union[np.ndarray, pd.DataFrame]:
         r"""
-        Returns the normalized (decoded) gene expression.
-
-        This is denoted as :math:`\rho_n` in the scVI paper.
+        Returns the fitted spliced and unspliced abundance (s(t) and u(t)).
 
         Parameters
         ----------
@@ -803,20 +686,10 @@ class VELOVI(VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
             AnnData object used to initialize the model.
         indices
             Indices of cells in adata to use. If `None`, all cells are used.
-        transform_batch
-            Batch to condition on.
-            If transform_batch is:
-
-            - None, then real observed batch is used.
-            - int, then batch transform_batch is used.
         gene_list
             Return frequencies of expression for a subset of genes.
             This can save memory when working with large datasets and few genes are
             of interest.
-        library_size
-            Scale the expression frequencies to a common library size.
-            This allows gene expression levels to be interpreted on a common scale of relevant
-            magnitude. If set to `"latent"`, use the latent libary size.
         n_samples
             Number of posterior samples to use for estimation.
         batch_size
@@ -827,8 +700,6 @@ class VELOVI(VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
             Return a :class:`~numpy.ndarray` instead of a :class:`~pandas.DataFrame`. DataFrame includes
             gene names as columns. If either `n_samples=1` or `return_mean=True`, defaults to `False`.
             Otherwise, it defaults to `True`.
-        clip
-            Clip to minus spliced value
 
         Returns
         -------
@@ -1167,81 +1038,6 @@ class VELOVI(VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
         return result
 
     @torch.no_grad()
-    @_doc_params(
-        doc_differential_expression=doc_differential_expression,
-    )
-    def differential_time(
-        self,
-        adata: Optional[AnnData] = None,
-        groupby: Optional[str] = None,
-        group1: Optional[Iterable[str]] = None,
-        group2: Optional[str] = None,
-        idx1: Optional[Union[Sequence[int], Sequence[bool], str]] = None,
-        idx2: Optional[Union[Sequence[int], Sequence[bool], str]] = None,
-        mode: Literal["vanilla", "change"] = "vanilla",
-        delta: float = 0.25,
-        batch_size: Optional[int] = None,
-        all_stats: bool = True,
-        batch_correction: bool = False,
-        batchid1: Optional[Iterable[str]] = None,
-        batchid2: Optional[Iterable[str]] = None,
-        fdr_target: float = 0.05,
-        silent: bool = False,
-        **kwargs,
-    ) -> pd.DataFrame:
-        r"""
-        A unified method for differential velocity analysis.
-
-        Implements `"vanilla"` DE [Lopez18]_ and `"change"` mode DE [Boyeau19]_.
-
-        Parameters
-        ----------
-        {doc_differential_expression}
-        **kwargs
-            Keyword args for :meth:`scvi.model.base.DifferentialComputation.get_bayes_factors`
-
-        Returns
-        -------
-        Differential expression DataFrame.
-        """
-        adata = self._validate_anndata(adata)
-
-        def model_fn(adata, **kwargs):
-            if "transform_batch" in kwargs.keys():
-                kwargs.pop("transform_batch")
-            return partial(
-                self.get_latent_time,
-                batch_size=batch_size,
-                n_samples=1,
-                return_numpy=True,
-            )(adata, **kwargs)
-
-        col_names = adata.var_names
-
-        result = _de_core(
-            self.get_anndata_manager(adata, required=True),
-            model_fn,
-            groupby,
-            group1,
-            group2,
-            idx1,
-            idx2,
-            all_stats,
-            scrna_raw_counts_properties,
-            col_names,
-            mode,
-            batchid1,
-            batchid2,
-            delta,
-            batch_correction,
-            fdr_target,
-            silent,
-            **kwargs,
-        )
-
-        return result
-
-    @torch.no_grad()
     def differential_transition(
         self,
         groupby: str,
@@ -1250,7 +1046,6 @@ class VELOVI(VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
         adata: Optional[AnnData] = None,
         batch_size: Optional[int] = None,
         n_samples: Optional[int] = 5000,
-        **kwargs,
     ) -> pd.DataFrame:
         adata = self._validate_anndata(adata)
         adata_manager = self.get_anndata_manager(adata, required=True)
@@ -1306,7 +1101,6 @@ class VELOVI(VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
         Extract per-gene weights in the linear decoder.
 
         Shape is genes by `n_latent`.
-
         """
         cols = ["Z_{}".format(i) for i in range(self.n_latent)]
         var_names = self.adata.var_names
@@ -1323,6 +1117,8 @@ class VELOVI(VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
         n_samples: int = 10,
     ) -> pd.DataFrame:
 
+        if self.module.decoder.linear_decoder is False:
+            raise ValueError("Model not trained with linear decoder")
         adata = self._validate_anndata(adata)
         adata_manager = self.get_anndata_manager(adata)
         n_latent = self.module.n_latent
@@ -1372,3 +1168,90 @@ class VELOVI(VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
                 df_out.iloc[i, j] = r_2
 
         return df_out
+
+    def get_directional_uncertainty(
+        self,
+        adata: Optional[AnnData] = None,
+        n_samples: int = 50,
+        gene_list: Iterable[str] = None,
+        n_jobs: int = -1,
+    ):
+
+        adata = self._validate_anndata(adata)
+
+        logger.info("Sampling from model...")
+        velocities_all = self.get_velocity(
+            n_samples=n_samples, return_mean=False, gene_list=gene_list
+        )  # (n_samples, n_cells, n_genes)
+
+        df = _compute_directional_statistics_tensor(
+            tensor=velocities_all, n_jobs=n_jobs, n_cells=adata.n_obs
+        )
+        df.index = adata.obs_names
+
+
+def _compute_directional_statistics_tensor(
+    tensor: np.ndarray, n_jobs: int, n_cells: int
+) -> pd.DataFrame:
+    df = pd.DataFrame(index=np.arange(n_cells))
+    df["directional_variance"] = np.nan
+    df["directional_difference"] = np.nan
+    df["directional_cosine_sim_variance"] = np.nan
+    df["directional_cosine_sim_difference"] = np.nan
+    df["directional_cosine_sim_mean"] = np.nan
+    logger.info("Computing the uncertainties...")
+    results = Parallel(n_jobs=n_jobs, verbose=3)(
+        delayed(_directional_statistics_per_cell)(tensor[:, cell_index, :])
+        for cell_index in range(n_cells)
+    )
+    df.loc[:, "directional_cosine_sim_variance"] = [
+        results[i][0] for i in range(n_cells)
+    ]
+    df.loc[:, "directional_cosine_sim_difference"] = [
+        results[i][1] for i in range(n_cells)
+    ]
+    df.loc[:, "directional_variance"] = [results[i][2] for i in range(n_cells)]
+    df.loc[:, "directional_difference"] = [results[i][3] for i in range(n_cells)]
+    df.loc[:, "directional_cosine_sim_mean"] = [results[i][4] for i in range(n_cells)]
+
+    return df
+
+
+def _directional_statistics_per_cell(
+    tensor: np.ndarray,
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """
+    Internal function for parallelization.
+
+    Parameters
+    ----------
+    tensor
+        Shape of samples by genes for a given cell.
+    """
+    n_samples = tensor.shape[0]
+    # over samples axis
+    mean_velocity_of_cell = tensor.mean(0)
+    cosine_sims = [
+        _cosine_sim(tensor[i, :], mean_velocity_of_cell) for i in range(n_samples)
+    ]
+    angle_samples = [np.arccos(el) for el in cosine_sims]
+    return (
+        np.var(cosine_sims),
+        np.percentile(cosine_sims, 95) - np.percentile(cosine_sims, 5),
+        np.var(angle_samples),
+        np.percentile(angle_samples, 95) - np.percentile(angle_samples, 5),
+        np.mean(cosine_sims),
+    )
+
+
+def _centered_unit_vector(vector: np.ndarray) -> np.ndarray:
+    """Returns the centered unit vector of the vector."""
+    vector = vector - np.mean(vector)
+    return vector / np.linalg.norm(vector)
+
+
+def _cosine_sim(v1: np.ndarray, v2: np.ndarray) -> np.ndarray:
+    """Returns cosine similarity of the vectors."""
+    v1_u = _centered_unit_vector(v1)
+    v2_u = _centered_unit_vector(v2)
+    return np.clip(np.dot(v1_u, v2_u), -1.0, 1.0)

@@ -18,8 +18,8 @@ def test_velovi():
     model.get_state_assignment()
     model.differential_velocity(groupby="labels")
     model.differential_transition(groupby="labels", group1="label_0", group2="label_1")
-    model.differential_time(groupby="labels")
     model.get_expression_fit()
+    model.get_directional_uncertainty()
 
     model = VELOVI(adata, n_latent=n_latent, linear_decoder=True)
     model.train(1, train_size=0.5)

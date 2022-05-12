@@ -209,7 +209,6 @@ class VELOVAE(BaseModuleClass):
         alpha_unconstr_init: Optional[np.ndarray] = None,
         switch_spliced: Optional[np.ndarray] = None,
         switch_unspliced: Optional[np.ndarray] = None,
-        induction_gene_mask: Optional[np.ndarray] = None,
         t_max: float = 20,
         penalty_scale: float = 0.2,
         alpha_max: float = 5.0,
@@ -227,12 +226,6 @@ class VELOVAE(BaseModuleClass):
         self.penalty_scale = penalty_scale
         self.alpha_max = alpha_max
         self.dirichlet_concentration = dirichlet_concentration
-
-        if induction_gene_mask is not None:
-            self.register_buffer(
-                "induction_gene_mask",
-                torch.from_numpy(induction_gene_mask).type(torch.BoolTensor),
-            )
 
         if switch_spliced is not None:
             self.register_buffer("switch_spliced", torch.from_numpy(switch_spliced))
@@ -438,23 +431,10 @@ class VELOVAE(BaseModuleClass):
 
         reconst_loss = reconst_loss_u.sum(dim=-1) + reconst_loss_s.sum(dim=-1)
 
-        if hasattr(self, "induction_gene_mask"):
-            concentration = px_pi_alpha[..., ~self.induction_gene_mask, :]
-            kl_pi = kl(
-                Dirichlet(concentration),
-                Dirichlet(0.1 * torch.ones_like(concentration)),
-            ).sum(dim=-1)
-            kl_pi += kl(
-                Dirichlet(px_pi_alpha[..., self.induction_gene_mask, :]),
-                Dirichlet(
-                    torch.tensor([5.0, 1.0, 0.1, 5.0], device=concentration.device)
-                ),
-            ).sum(dim=-1)
-        else:
-            kl_pi = kl(
-                Dirichlet(px_pi_alpha),
-                Dirichlet(self.dirichlet_concentration * torch.ones_like(px_pi)),
-            ).sum(dim=-1)
+        kl_pi = kl(
+            Dirichlet(px_pi_alpha),
+            Dirichlet(self.dirichlet_concentration * torch.ones_like(px_pi)),
+        ).sum(dim=-1)
 
         # local loss
         kl_local = kl_divergence_z + kl_pi
