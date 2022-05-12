@@ -1270,6 +1270,8 @@ class VELOVI(VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
         )
         df.index = adata.obs_names
 
+        return df
+
 
 def _compute_directional_statistics_tensor(
     tensor: np.ndarray, n_jobs: int, n_cells: int
