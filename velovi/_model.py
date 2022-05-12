@@ -122,13 +122,15 @@ class VELOVI(VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
     def train(
         self,
         max_epochs: Optional[int] = 500,
+        lr: float = 1e-2,
+        weight_decay: float = 1e-2,
         use_gpu: Optional[Union[str, int, bool]] = None,
         train_size: float = 0.9,
         validation_size: Optional[float] = None,
         batch_size: int = 256,
         early_stopping: bool = True,
-        plan_kwargs: Optional[dict] = None,
         gradient_clip_val: float = 10,
+        plan_kwargs: Optional[dict] = None,
         **trainer_kwargs,
     ):
         """
@@ -139,6 +141,10 @@ class VELOVI(VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
         max_epochs
             Number of passes through the dataset. If `None`, defaults to
             `np.min([round((20000 / n_cells) * 400), 400])`
+        lr
+            Learning rate for optimization
+        weight_decay
+            Weight decay for optimization
         use_gpu
             Use default GPU if available (if None or True), or index of GPU to use (if int),
             or name of GPU (if str, e.g., `'cuda:0'`), or use CPU (if False).
@@ -152,18 +158,18 @@ class VELOVI(VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
         early_stopping
             Perform early stopping. Additional arguments can be passed in `**kwargs`.
             See :class:`~scvi.train.Trainer` for further options.
+        gradient_clip_val
+            Val for gradient clipping
         plan_kwargs
             Keyword args for :class:`~scvi.train.TrainingPlan`. Keyword arguments passed to
             `train()` will overwrite values present in `plan_kwargs`, when appropriate.
-        gradient_clip_val
-            Val for gradient clipping
         **trainer_kwargs
             Other keyword args for :class:`~scvi.train.Trainer`.
         """
         user_plan_kwargs = (
             plan_kwargs.copy() if isinstance(plan_kwargs, dict) else dict()
         )
-        plan_kwargs = dict(lr=1e-2, weight_decay=1e-2, optimizer="AdamW")
+        plan_kwargs = dict(lr=lr, weight_decay=weight_decay, optimizer="AdamW")
         plan_kwargs.update(user_plan_kwargs)
 
         user_train_kwargs = trainer_kwargs.copy()
