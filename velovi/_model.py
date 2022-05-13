@@ -61,7 +61,7 @@ class VELOVI(VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
         self,
         adata: AnnData,
         n_hidden: int = 256,
-        n_latent: int = 15,
+        n_latent: int = 10,
         n_layers: int = 1,
         dropout_rate: float = 0.1,
         gamma_init_data: bool = False,
