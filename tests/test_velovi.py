@@ -20,6 +20,7 @@ def test_velovi():
     model.differential_transition(groupby="labels", group1="label_0", group2="label_1")
     model.get_expression_fit()
     model.get_directional_uncertainty()
+    model.get_permutation_scores(labels_key="labels")
 
     model = VELOVI(adata, n_latent=n_latent, linear_decoder=True)
     model.train(1, train_size=0.5)

@@ -1272,6 +1272,100 @@ class VELOVI(VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
 
         return df
 
+    def get_permutation_scores(
+        self, labels_key: str, adata: Optional[AnnData] = None
+    ) -> Tuple[pd.DataFrame, AnnData]:
+        """
+        Compute permutation scores.
+
+        Parameters
+        ----------
+        labels_key
+            Key in adata.obs encoding cell types
+        adata
+            AnnData object with equivalent structure to initial AnnData. If `None`, defaults to the
+            AnnData object used to initialize the model.
+
+        Returns
+        -------
+        Tuple of DataFrame and AnnData. DataFrame is genes by cell types with score per cell type.
+        AnnData is the permutated version of the original AnnData.
+        """
+        adata = self._validate_anndata(adata)
+        adata_manager = self.get_anndata_manager(adata)
+        if labels_key not in adata.obs:
+            raise ValueError(f"{labels_key} not found in adata.obs")
+
+        bdata = self._shuffle_layer_celltype(adata_manager, labels_key)
+
+        ms_ = adata_manager.get_from_registry(REGISTRY_KEYS.X_KEY)
+        mu_ = adata_manager.get_from_registry(REGISTRY_KEYS.U_KEY)
+
+        bdata_manager = self.get_anndata_manager(bdata)
+        ms_p = bdata_manager.get_from_registry(REGISTRY_KEYS.X_KEY)
+        mu_p = bdata_manager.get_from_registry(REGISTRY_KEYS.U_KEY)
+
+        spliced_, unspliced_ = self.get_expression_fit(adata, n_samples=10)
+        root_squared_error = np.sqrt(((spliced_ - ms_) ** 2))
+        root_squared_error += np.sqrt(((unspliced_ - mu_) ** 2))
+
+        spliced_p, unspliced_p = self.get_expression_fit(bdata, n_samples=10)
+        root_squared_error_p = np.sqrt((spliced_p - ms_p) ** 2)
+        root_squared_error_p += np.sqrt((unspliced_p - mu_p) ** 2)
+
+        celltypes = np.unique(adata.obs[labels_key])
+
+        dynamical_df = pd.DataFrame(
+            index=adata.var_names,
+            columns=celltypes,
+            data=np.zeros((adata.shape[1], len(celltypes))),
+        )
+        for ct in celltypes:
+            for g in adata.var_names.tolist():
+                x = root_squared_error_p[g][adata.obs[labels_key] == ct]
+                y = root_squared_error[g][adata.obs[labels_key] == ct]
+                ratio = 1 - y.mean() / x.mean()
+                dynamical_df.loc[g, ct] = ratio
+
+        return dynamical_df, bdata
+
+    def _shuffle_layer_celltype(
+        self, adata_manager: AnnDataManager, labels_key: str
+    ) -> AnnData:
+        """Shuffle cells within cell types for each gene."""
+        from scvi.data._constants import _SCVI_UUID_KEY
+
+        bdata = adata_manager.adata.copy()
+        labels = bdata.obs[labels_key]
+        del bdata.uns[_SCVI_UUID_KEY]
+        self._validate_anndata(bdata)
+        bdata_manager = self.get_anndata_manager(bdata)
+
+        # get registry info to later set data back in bdata
+        # in a way that doesn't require actual knowledge of location
+        unspliced = bdata_manager.get_from_registry(REGISTRY_KEYS.U_KEY)
+        u_registry = bdata_manager.data_registry[REGISTRY_KEYS.U_KEY]
+        attr_name = u_registry.attr_name
+        attr_key = u_registry.attr_key
+
+        for lab in np.unique(labels):
+            mask = np.asarray(labels == lab)
+            unspliced_ct = unspliced[mask].copy()
+            unspliced_ct = np.apply_along_axis(
+                np.random.permutation, axis=0, arr=unspliced_ct
+            )
+            unspliced[mask] = unspliced_ct
+        # e.g., if using adata.X
+        if attr_key is None:
+            setattr(bdata, attr_name, unspliced)
+        # e.g., if using a layer
+        elif attr_key is not None:
+            attribute = getattr(bdata, attr_name)
+            attribute[attr_key] = unspliced
+            setattr(bdata, attr_name, attribute)
+
+        return bdata
+
 
 def _compute_directional_statistics_tensor(
     tensor: np.ndarray, n_jobs: int, n_cells: int
