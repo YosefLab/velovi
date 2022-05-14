@@ -1302,14 +1302,13 @@ class VELOVI(VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
         )
         bdata_manager = self.get_anndata_manager(bdata)
         bdata = self._shuffle_layer_celltype(
-            adata_manager, labels_key, REGISTRY_KEYS.U_KEY
+            bdata_manager, labels_key, REGISTRY_KEYS.U_KEY
         )
         bdata_manager = self.get_anndata_manager(bdata)
 
         ms_ = adata_manager.get_from_registry(REGISTRY_KEYS.X_KEY)
         mu_ = adata_manager.get_from_registry(REGISTRY_KEYS.U_KEY)
 
-        bdata_manager = self.get_anndata_manager(bdata)
         ms_p = bdata_manager.get_from_registry(REGISTRY_KEYS.X_KEY)
         mu_p = bdata_manager.get_from_registry(REGISTRY_KEYS.U_KEY)
 
