@@ -9,6 +9,7 @@ import torch
 import torch.nn.functional as F
 from anndata import AnnData
 from joblib import Parallel, delayed
+from scipy.stats import ttest_ind
 from scvi._compat import Literal
 from scvi._utils import _doc_params
 from scvi.data import AnnDataManager
@@ -1327,11 +1328,12 @@ class VELOVI(VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
             columns=celltypes,
             data=np.zeros((adata.shape[1], len(celltypes))),
         )
+        N = 200
         for ct in celltypes:
             for g in adata.var_names.tolist():
                 x = root_squared_error_p[g][adata.obs[labels_key] == ct]
                 y = root_squared_error[g][adata.obs[labels_key] == ct]
-                ratio = -1 * y.mean() / x.mean()
+                ratio = ttest_ind(x[:N], y[:N])[0]
                 dynamical_df.loc[g, ct] = ratio
 
         return dynamical_df, bdata
