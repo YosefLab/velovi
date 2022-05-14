@@ -1296,7 +1296,15 @@ class VELOVI(VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
         if labels_key not in adata.obs:
             raise ValueError(f"{labels_key} not found in adata.obs")
 
-        bdata = self._shuffle_layer_celltype(adata_manager, labels_key)
+        # shuffle spliced then unspliced
+        bdata = self._shuffle_layer_celltype(
+            adata_manager, labels_key, REGISTRY_KEYS.X_KEY
+        )
+        bdata_manager = self.get_anndata_manager(bdata)
+        bdata = self._shuffle_layer_celltype(
+            adata_manager, labels_key, REGISTRY_KEYS.U_KEY
+        )
+        bdata_manager = self.get_anndata_manager(bdata)
 
         ms_ = adata_manager.get_from_registry(REGISTRY_KEYS.X_KEY)
         mu_ = adata_manager.get_from_registry(REGISTRY_KEYS.U_KEY)
@@ -1324,13 +1332,13 @@ class VELOVI(VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
             for g in adata.var_names.tolist():
                 x = root_squared_error_p[g][adata.obs[labels_key] == ct]
                 y = root_squared_error[g][adata.obs[labels_key] == ct]
-                ratio = 1 - y.mean() / x.mean()
+                ratio = -1 * y.mean() / x.mean()
                 dynamical_df.loc[g, ct] = ratio
 
         return dynamical_df, bdata
 
     def _shuffle_layer_celltype(
-        self, adata_manager: AnnDataManager, labels_key: str
+        self, adata_manager: AnnDataManager, labels_key: str, registry_key: str
     ) -> AnnData:
         """Shuffle cells within cell types for each gene."""
         from scvi.data._constants import _SCVI_UUID_KEY
@@ -1343,8 +1351,8 @@ class VELOVI(VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
 
         # get registry info to later set data back in bdata
         # in a way that doesn't require actual knowledge of location
-        unspliced = bdata_manager.get_from_registry(REGISTRY_KEYS.U_KEY)
-        u_registry = bdata_manager.data_registry[REGISTRY_KEYS.U_KEY]
+        unspliced = bdata_manager.get_from_registry(registry_key)
+        u_registry = bdata_manager.data_registry[registry_key]
         attr_name = u_registry.attr_name
         attr_key = u_registry.attr_key
 
