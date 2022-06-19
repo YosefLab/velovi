@@ -84,7 +84,7 @@ intersphinx_mapping = dict(
 
 
 # General information about the project.
-project = "mypackage"
+project = "velovi"
 copyright = "2021, Yosef Lab, UC Berkeley"
 author = "Adam Gayoso"
 

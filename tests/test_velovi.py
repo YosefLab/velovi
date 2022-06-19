@@ -1,6 +1,19 @@
+import scvelo as scv
 from scvi.data import synthetic_iid
 
 from velovi import VELOVI
+
+
+def test_preprocess_data():
+
+    adata = synthetic_iid()
+    adata.layers["spliced"] = adata.X.copy()
+    adata.layers["unspliced"] = adata.X.copy()
+    scv.pp.normalize_per_cell(adata)
+    scv.pp.log1p(adata)
+    scv.pp.moments(adata, n_pcs=30, n_neighbors=30)
+    # TODO(adamgayoso): use real data for this test
+    # preprocess_data(adata)
 
 
 def test_velovi():
