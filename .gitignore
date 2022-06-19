@@ -133,3 +133,5 @@ dmypy.json
 
 # vscode
 .vscode/settings.json
+docs/api/reference/
+*.h5ad
