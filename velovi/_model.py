@@ -1266,12 +1266,12 @@ class VELOVI(VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
             n_samples=n_samples, return_mean=False, gene_list=gene_list
         )  # (n_samples, n_cells, n_genes)
 
-        df = _compute_directional_statistics_tensor(
+        df, cosine_sims = _compute_directional_statistics_tensor(
             tensor=velocities_all, n_jobs=n_jobs, n_cells=adata.n_obs
         )
         df.index = adata.obs_names
 
-        return df
+        return df, cosine_sims
 
     def get_permutation_scores(
         self, labels_key: str, adata: Optional[AnnData] = None
@@ -1390,17 +1390,19 @@ def _compute_directional_statistics_tensor(
         delayed(_directional_statistics_per_cell)(tensor[:, cell_index, :])
         for cell_index in range(n_cells)
     )
+    # cells by samples
+    cosine_sims = np.stack([results[i][0] for i in range(n_cells)])
     df.loc[:, "directional_cosine_sim_variance"] = [
-        results[i][0] for i in range(n_cells)
-    ]
-    df.loc[:, "directional_cosine_sim_difference"] = [
         results[i][1] for i in range(n_cells)
     ]
-    df.loc[:, "directional_variance"] = [results[i][2] for i in range(n_cells)]
-    df.loc[:, "directional_difference"] = [results[i][3] for i in range(n_cells)]
-    df.loc[:, "directional_cosine_sim_mean"] = [results[i][4] for i in range(n_cells)]
+    df.loc[:, "directional_cosine_sim_difference"] = [
+        results[i][2] for i in range(n_cells)
+    ]
+    df.loc[:, "directional_variance"] = [results[i][3] for i in range(n_cells)]
+    df.loc[:, "directional_difference"] = [results[i][4] for i in range(n_cells)]
+    df.loc[:, "directional_cosine_sim_mean"] = [results[i][5] for i in range(n_cells)]
 
-    return df
+    return df, cosine_sims
 
 
 def _directional_statistics_per_cell(
@@ -1422,6 +1424,7 @@ def _directional_statistics_per_cell(
     ]
     angle_samples = [np.arccos(el) for el in cosine_sims]
     return (
+        cosine_sims,
         np.var(cosine_sims),
         np.percentile(cosine_sims, 95) - np.percentile(cosine_sims, 5),
         np.var(angle_samples),
