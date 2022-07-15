@@ -1314,12 +1314,12 @@ class VELOVI(VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
         mu_p = bdata_manager.get_from_registry(REGISTRY_KEYS.U_KEY)
 
         spliced_, unspliced_ = self.get_expression_fit(adata, n_samples=10)
-        root_squared_error = np.sqrt(((spliced_ - ms_) ** 2))
-        root_squared_error += np.sqrt(((unspliced_ - mu_) ** 2))
+        root_squared_error = np.abs(spliced_ - ms_)
+        root_squared_error += np.abs(unspliced_ - mu_)
 
         spliced_p, unspliced_p = self.get_expression_fit(bdata, n_samples=10)
-        root_squared_error_p = np.sqrt((spliced_p - ms_p) ** 2)
-        root_squared_error_p += np.sqrt((unspliced_p - mu_p) ** 2)
+        root_squared_error_p = np.abs(spliced_p - ms_p)
+        root_squared_error_p += np.abs(unspliced_p - mu_p)
 
         celltypes = np.unique(adata.obs[labels_key])
 
