@@ -207,12 +207,15 @@ class VELOVAE(BaseModuleClass):
         model_steady_states: bool = True,
         gamma_unconstr_init: Optional[np.ndarray] = None,
         alpha_unconstr_init: Optional[np.ndarray] = None,
+        alpha_1_unconstr_init: Optional[np.ndarray] = None,
+        lambda_alpha_unconstr_init: Optional[np.ndarray] = None,
         switch_spliced: Optional[np.ndarray] = None,
         switch_unspliced: Optional[np.ndarray] = None,
         t_max: float = 20,
         penalty_scale: float = 0.2,
         dirichlet_concentration: float = 0.25,
         linear_decoder: bool = False,
+        time_dep_transcription_rate: bool = False,
     ):
         super().__init__()
         self.n_latent = n_latent
@@ -224,6 +227,7 @@ class VELOVAE(BaseModuleClass):
         self.t_max = t_max
         self.penalty_scale = penalty_scale
         self.dirichlet_concentration = dirichlet_concentration
+        self.time_dep_transcription_rate = time_dep_transcription_rate
 
         if switch_spliced is not None:
             self.register_buffer("switch_spliced", torch.from_numpy(switch_spliced))
@@ -262,6 +266,23 @@ class VELOVAE(BaseModuleClass):
             self.alpha_unconstr = torch.nn.Parameter(
                 torch.from_numpy(alpha_unconstr_init)
             )
+
+        # TODO: Add `require_grad`
+        if alpha_1_unconstr_init is None:
+            self.alpha_1_unconstr = torch.nn.Parameter(0 * torch.ones(n_input))
+        else:
+            self.alpha_1_unconstr = torch.nn.Parameter(
+                torch.from_numpy(alpha_1_unconstr_init)
+            )
+        self.alpha_1_unconstr.requires_grad = time_dep_transcription_rate
+
+        if lambda_alpha_unconstr_init is None:
+            self.lambda_alpha_unconstr = torch.nn.Parameter(0 * torch.ones(n_input))
+        else:
+            self.lambda_alpha_unconstr = torch.nn.Parameter(
+                torch.from_numpy(lambda_alpha_unconstr_init)
+            )
+        self.lambda_alpha_unconstr.requires_grad = time_dep_transcription_rate
 
         # likelihood dispersion
         # for now, with normal dist, this is just the variance
@@ -316,12 +337,16 @@ class VELOVAE(BaseModuleClass):
         gamma = inference_outputs["gamma"]
         beta = inference_outputs["beta"]
         alpha = inference_outputs["alpha"]
+        alpha_1 = inference_outputs["alpha_1"]
+        lambda_alpha = inference_outputs["lambda_alpha"]
 
         input_dict = {
             "z": z,
             "gamma": gamma,
             "beta": beta,
             "alpha": alpha,
+            "alpha_1": alpha_1,
+            "lambda_alpha": lambda_alpha,
         }
         return input_dict
 
@@ -354,9 +379,18 @@ class VELOVAE(BaseModuleClass):
             untran_z = Normal(qz_m, qz_v.sqrt()).sample()
             z = self.z_encoder.z_transformation(untran_z)
 
-        gamma, beta, alpha = self._get_rates()
+        gamma, beta, alpha, alpha_1, lambda_alpha = self._get_rates()
 
-        outputs = dict(z=z, qz_m=qz_m, qz_v=qz_v, gamma=gamma, beta=beta, alpha=alpha)
+        outputs = dict(
+            z=z,
+            qz_m=qz_m,
+            qz_v=qz_v,
+            gamma=gamma,
+            beta=beta,
+            alpha=alpha,
+            alpha_1=alpha_1,
+            lambda_alpha=lambda_alpha,
+        )
         return outputs
 
     def _get_rates(self):
@@ -367,11 +401,17 @@ class VELOVAE(BaseModuleClass):
         beta = torch.clamp(F.softplus(self.beta_mean_unconstr), 0, 50)
         # transcription
         alpha = torch.clamp(F.softplus(self.alpha_unconstr), 0, 50)
+        if self.time_dep_transcription_rate:
+            alpha_1 = torch.clamp(F.softplus(self.alpha_1_unconstr), 0, 50)
+            lambda_alpha = torch.clamp(F.softplus(self.lambda_alpha_unconstr), 0, 50)
+        else:
+            alpha_1 = self.alpha_1_unconstr
+            lambda_alpha = self.lambda_alpha_unconstr
 
-        return gamma, beta, alpha
+        return gamma, beta, alpha, alpha_1, lambda_alpha
 
     @auto_move_data
-    def generative(self, z, gamma, beta, alpha, latent_dim=None):
+    def generative(self, z, gamma, beta, alpha, alpha_1, lambda_alpha, latent_dim=None):
         """Runs the generative model."""
         decoder_input = z
         px_pi_alpha, px_rho, px_tau = self.decoder(decoder_input, latent_dim=latent_dim)
@@ -388,6 +428,8 @@ class VELOVAE(BaseModuleClass):
             gamma,
             beta,
             alpha,
+            alpha_1,
+            lambda_alpha,
         )
 
         return dict(
@@ -464,6 +506,8 @@ class VELOVAE(BaseModuleClass):
         gamma,
         beta,
         alpha,
+        alpha_1,
+        lambda_alpha,
     ) -> torch.Tensor:
 
         t_s = torch.clamp(F.softplus(self.switch_time_unconstr), 0, self.t_max)
@@ -475,14 +519,21 @@ class VELOVAE(BaseModuleClass):
 
         # induction
         mean_u_ind, mean_s_ind = self._get_induction_unspliced_spliced(
-            alpha, beta, gamma, t_s * px_rho
+            alpha, alpha_1, lambda_alpha, beta, gamma, t_s * px_rho
         )
-        mean_u_ind_steady = (alpha / beta).expand(n_cells, self.n_input)
-        mean_s_ind_steady = (alpha / gamma).expand(n_cells, self.n_input)
+
+        if self.time_dep_transcription_rate:
+            mean_u_ind_steady = (alpha_1 / beta).expand(n_cells, self.n_input)
+            mean_s_ind_steady = (alpha_1 / gamma).expand(n_cells, self.n_input)
+        else:
+            mean_u_ind_steady = (alpha / beta).expand(n_cells, self.n_input)
+            mean_s_ind_steady = (alpha / gamma).expand(n_cells, self.n_input)
         scale_u = scale[: self.n_input, :].expand(n_cells, self.n_input, 4).sqrt()
 
         # repression
-        u_0, s_0 = self._get_induction_unspliced_spliced(alpha, beta, gamma, t_s)
+        u_0, s_0 = self._get_induction_unspliced_spliced(
+            alpha, alpha_1, lambda_alpha, beta, gamma, t_s
+        )
 
         tau = px_tau
         mean_u_rep, mean_s_rep = self._get_repression_unspliced_spliced(
@@ -541,11 +592,38 @@ class VELOVAE(BaseModuleClass):
 
         return mixture_dist_s, mixture_dist_u, end_penalty
 
-    def _get_induction_unspliced_spliced(self, alpha, beta, gamma, t, eps=1e-6):
-        unspliced = (alpha / beta) * (1 - torch.exp(-beta * t))
-        spliced = (alpha / gamma) * (1 - torch.exp(-gamma * t)) + (
-            alpha / ((gamma - beta) + eps)
-        ) * (torch.exp(-gamma * t) - torch.exp(-beta * t))
+    def _get_induction_unspliced_spliced(
+        self, alpha, alpha_1, lambda_alpha, beta, gamma, t, eps=1e-6
+    ):
+        if self.time_dep_transcription_rate:
+            unspliced = alpha_1 / beta * (1 - torch.exp(-beta * t)) - (
+                alpha_1 - alpha
+            ) / (beta - lambda_alpha) * (
+                torch.exp(-lambda_alpha * t) - torch.exp(-beta * t)
+            )
+
+            spliced = (
+                alpha_1 / gamma * (1 - torch.exp(-gamma * t))
+                + alpha_1
+                / (gamma - beta + eps)
+                * (torch.exp(-gamma * t) - torch.exp(-beta * t))
+                - beta
+                * (alpha_1 - alpha)
+                / (beta - lambda_alpha + eps)
+                / (gamma - lambda_alpha + eps)
+                * (torch.exp(-lambda_alpha * t) - torch.exp(-gamma * t))
+                + beta
+                * (alpha_1 - alpha)
+                / (beta - lambda_alpha + eps)
+                / (gamma - beta + eps)
+                * (torch.exp(-beta * t) - torch.exp(-gamma * t))
+            )
+        else:
+            unspliced = (alpha / beta) * (1 - torch.exp(-beta * t))
+            spliced = (alpha / gamma) * (1 - torch.exp(-gamma * t)) + (
+                alpha / ((gamma - beta) + eps)
+            ) * (torch.exp(-gamma * t) - torch.exp(-beta * t))
+
         return unspliced, spliced
 
     def _get_repression_unspliced_spliced(self, u_0, s_0, beta, gamma, t, eps=1e-6):
