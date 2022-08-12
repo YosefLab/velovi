@@ -4,7 +4,7 @@ Installation
 Prerequisites
 ~~~~~~~~~~~~~~
 
-my_package can be installed via PyPI.
+velovi can be installed via PyPI.
 
 conda prerequisites
 ###################
@@ -13,11 +13,11 @@ conda prerequisites
 
 2. Create a new conda environment::
 
-    conda create -n scvi-env python=3.7
+    conda create -n velovi-env python=3.8
 
 3. Activate your environment::
 
-    source activate scvi-env
+    source activate velovi-env
 
 pip prerequisites:
 ##################
@@ -37,11 +37,11 @@ Install my_package in one of the following ways:
 
 Through **pip**::
 
-    pip install <my_package>
+    pip install velovi
 
 Through pip with packages to run notebooks. This installs scanpy, etc.::
 
-    pip install <my_package>[tutorials]
+    pip install velovi[tutorials]
 
 Nightly version - clone this repo and run::
 
