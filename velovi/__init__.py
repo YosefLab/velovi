@@ -7,7 +7,7 @@ from rich.logging import RichHandler
 
 from ._constants import REGISTRY_KEYS
 from ._model import VELOVI, VELOVAE
-from ._utils import preprocess_data
+from ._utils import get_permutation_scores, preprocess_data
 
 # https://github.com/python-poetry/poetry/pull/2366#issuecomment-652418094
 # https://github.com/python-poetry/poetry/issues/144#issuecomment-623927302
@@ -35,4 +35,10 @@ logger.addHandler(ch)
 # this prevents double outputs
 logger.propagate = False
 
-__all__ = ["VELOVI", "VELOVAE", "REGISTRY_KEYS", "preprocess_data"]
+__all__ = [
+    "VELOVI",
+    "VELOVAE",
+    "REGISTRY_KEYS",
+    "get_permutation_scores",
+    "preprocess_data",
+]
