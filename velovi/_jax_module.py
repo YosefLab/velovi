@@ -17,6 +17,7 @@ import jax
 from ._constants import REGISTRY_KEYS
 
 _STATE_COLLECTION = "constants"
+_LATENT_RNG_KEY = "latent"
 
 
 class _MLP(nn.Module):
@@ -71,7 +72,7 @@ class _Encoder(nn.Module):
         )(x)
         mu = nn.Dense(features=self.n_latent)(x)
         var = nn.softplus(nn.Dense(features=self.n_latent)(x)) + self.var_eps
-        latent = Normal(mu, var).rsample(self.make_rng("z"))
+        latent = Normal(mu, var).rsample(self.make_rng(_LATENT_RNG_KEY))
         return mu, var, latent
 
 
@@ -307,7 +308,7 @@ class JaxVELOVAE(JaxBaseModuleClass):
 
     @property
     def required_rngs(self):  # noqa: D102
-        return ("params", "dropout", "z")
+        return ("params", "dropout", _LATENT_RNG_KEY)
 
     def _get_generative_input(self, ndarrays, inference_outputs):
         z = inference_outputs["z"]
@@ -346,7 +347,7 @@ class JaxVELOVAE(JaxBaseModuleClass):
         qz = Normal(qz_m, qz_v)
 
         if n_samples > 1:
-            z = qz.rsample(self.make_rng("z"), (n_samples,))
+            z = qz.rsample(self.make_rng(_LATENT_RNG_KEY), (n_samples,))
 
         gamma, beta, alpha, alpha_1, lambda_alpha = self._get_rates()
 
@@ -385,7 +386,7 @@ class JaxVELOVAE(JaxBaseModuleClass):
         px_pi_alpha, px_rho, px_tau = self.decoder(
             decoder_input, training=self.training
         )
-        px_pi = Dirichlet(px_pi_alpha).rsample(self.make_rng(z))
+        px_pi = Dirichlet(px_pi_alpha).rsample(self.make_rng(_LATENT_RNG_KEY))
 
         scale_unconstr = self.scale_unconstr
         scale = nn.softplus(scale_unconstr)
@@ -461,7 +462,7 @@ class JaxVELOVAE(JaxBaseModuleClass):
         )
 
         loss_recoder = LossRecorder(
-            loss, reconst_loss, kl_local, jnp.ndarray(global_loss)
+            loss, reconst_loss, kl_local, jnp.array([global_loss])
         )
 
         return loss_recoder
@@ -517,11 +518,11 @@ class JaxVELOVAE(JaxBaseModuleClass):
         mean_u_rep_steady = jnp.zeros_like(mean_u_ind)
         mean_s_rep_steady = jnp.zeros_like(mean_u_ind)
         scale_s = jnp.resize(
-            scale[self.n_input :, :], (n_cells, self.n_input, 4)
-        ).sqrt()
+            jnp.sqrt(scale[self.n_input :, :]), (n_cells, self.n_input, 4)
+        )
 
-        end_penalty = ((u_0 - self.switch_unspliced).pow(2)).sum() + (
-            (s_0 - self.switch_spliced).pow(2)
+        end_penalty = (jnp.square(u_0 - self.switch_unspliced)).sum() + (
+            jnp.square(s_0 - self.switch_spliced)
         ).sum()
 
         # unspliced

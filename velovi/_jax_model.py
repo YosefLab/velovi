@@ -1024,6 +1024,9 @@ class JaxVELOVI(JaxTrainingMixin, BaseModelClass):
             "lambda_alpha": lambda_alpha.cpu().numpy(),
         }
 
+    def to_device(self, device):  # noqa: D102
+        pass
+
     @classmethod
     @setup_anndata_dsp.dedent
     def setup_anndata(
