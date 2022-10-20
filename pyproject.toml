@@ -50,7 +50,7 @@ python-igraph = {version = "*", optional = true}
 scanpy = {version = ">=1.6", optional = true}
 scanpydoc = {version = ">=0.5", optional = true}
 scvelo = "*"
-scvi-tools = ">=0.16.4"
+scvi-tools = ">=0.19.0a0"
 scikit-learn = ">=0.21.2"
 sphinx = {version = ">=4.1", optional = true}
 sphinx-autodoc-typehints = {version = "*", optional = true}
