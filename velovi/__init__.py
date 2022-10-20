@@ -6,7 +6,10 @@ from rich.console import Console
 from rich.logging import RichHandler
 
 from ._constants import REGISTRY_KEYS
-from ._model import VELOVI, VELOVAE
+from ._module import VELOVAE
+from ._jax_module import JaxVELOVAE
+from ._model import VELOVI
+from ._jax_model import JaxVELOVI
 from ._utils import get_permutation_scores, preprocess_data
 
 # https://github.com/python-poetry/poetry/pull/2366#issuecomment-652418094
@@ -41,4 +44,6 @@ __all__ = [
     "REGISTRY_KEYS",
     "get_permutation_scores",
     "preprocess_data",
+    "JaxVELOVI",
+    "JaxVELOVAE",
 ]

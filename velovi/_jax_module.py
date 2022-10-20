@@ -2,7 +2,7 @@ from typing import Callable, Iterable, Optional
 
 import numpy as np
 from scvi._compat import Literal
-from scvi.module.base import JaxBaseModuleClass, LossRecorder
+from scvi.module.base import JaxBaseModuleClass, LossRecorder, flax_configure
 from flax import linen as nn
 from numpyro.distributions import (
     Categorical,
@@ -12,8 +12,11 @@ from numpyro.distributions import (
     kl_divergence as kl,
 )
 import jax.numpy as jnp
+import jax
 
 from ._constants import REGISTRY_KEYS
+
+_STATE_COLLECTION = "constants"
 
 
 class _MLP(nn.Module):
@@ -39,7 +42,7 @@ class _MLP(nn.Module):
             if self.layer_norm:
                 x = nn.LayerNorm(use_bias=False, use_scale=False)(x)
             x = nn.relu(x)
-            x = nn.Dropout(rate=self.dropout_rate)(x)
+            x = nn.Dropout(rate=self.dropout_rate, deterministic=is_eval)(x)
         return x
 
 
@@ -67,11 +70,8 @@ class _Encoder(nn.Module):
             training=training,
         )(x)
         mu = nn.Dense(features=self.n_latent)(x)
-        var = (
-            nn.Sequential(nn.Dense(features=self.n_latent), nn.softplus)(x)
-            + self.var_eps
-        )
-        latent = Normal(mu, var).rsample()
+        var = nn.softplus(nn.Dense(features=self.n_latent)(x)) + self.var_eps
+        latent = Normal(mu, var).rsample(self.make_rng("z"))
         return mu, var, latent
 
 
@@ -91,50 +91,49 @@ class _DecoderVELOVI(nn.Module):
         The number of nodes per hidden layer
     dropout_rate
         Dropout rate to apply to each of the hidden layers
-    use_batch_norm
+    batch_norm
         Whether to use batch norm in layers
-    use_layer_norm
+    layer_norm
         Whether to use layer norm in layers
     """
 
     n_output: int
     n_layers: int = 1
     n_hidden: int = 128
-    use_batch_norm: bool = True
-    use_layer_norm: bool = True
+    batch_norm: bool = True
+    layer_norm: bool = True
     dropout_rate: float = 0.0
     training: Optional[bool] = None
 
     @nn.compact
     def __call__(self, z: jnp.ndarray, training: Optional[bool] = None):
-        rho_first = self._MLP(
+        rho_first = _MLP(
             n_layers=self.n_layers,
             n_hidden=self.n_hidden,
             dropout_rate=self.dropout_rate,
-            batch_norm=self.use_batch_norm,
-            layer_norm=self.use_layer_norm,
+            batch_norm=self.batch_norm,
+            layer_norm=self.layer_norm,
             training=training,
         )(z)
 
-        px_rho = nn.Sequential(nn.Dense(features=self.n_output), nn.sigmoid)(rho_first)
-        px_tau = nn.Sequential(nn.Dense(features=self.n_output), nn.sigmoid)(rho_first)
+        px_rho = nn.sigmoid(nn.Dense(features=self.n_output)(rho_first))
+        px_tau = nn.sigmoid(nn.Dense(features=self.n_output)(rho_first))
 
         # cells by genes by 4
-        pi_first = self._MLP(
+        pi_first = _MLP(
             n_layers=self.n_layers,
             n_hidden=self.n_hidden,
             dropout_rate=self.dropout_rate,
-            batch_norm=self.use_batch_norm,
-            layer_norm=self.use_layer_norm,
+            batch_norm=self.batch_norm,
+            layer_norm=self.layer_norm,
             training=training,
         )(z)
-        px_pi = nn.Sequential(
-            nn.DenseGeneral(features=(self.n_output, 4)), nn.softplus
-        )(pi_first)
+        px_pi = nn.softplus(nn.DenseGeneral(features=(self.n_output, 4))(pi_first))
 
         return px_pi, px_rho, px_tau
 
 
+@flax_configure
 class JaxVELOVAE(JaxBaseModuleClass):
     """
     Variational auto-encoder model.
@@ -179,6 +178,7 @@ class JaxVELOVAE(JaxBaseModuleClass):
     penalty_scale: float = 0.2
     dirichlet_concentration: float = 0.25
     latent_distribution: str = "normal"
+    training: bool = True
 
     def setup(self):
         use_batch_norm = self.use_batch_norm
@@ -189,10 +189,14 @@ class JaxVELOVAE(JaxBaseModuleClass):
         use_layer_norm_decoder = use_layer_norm == "decoder" or use_layer_norm == "both"
 
         self.switch_spliced = self.variable(
-            "switch_spliced", lambda: jnp.from_numpy(self.switch_spliced)
+            _STATE_COLLECTION,
+            "switch_spliced",
+            lambda: jnp.asarray(self.switch_spliced_init),
         ).value
         self.switch_unspliced = self.variable(
-            "switch_unspliced", lambda: jnp.from_numpy(self.switch_unspliced)
+            _STATE_COLLECTION,
+            "switch_unspliced",
+            lambda: jnp.asarray(self.switch_unspliced_init),
         ).value
 
         self.n_genes = self.n_input * 2
@@ -200,7 +204,7 @@ class JaxVELOVAE(JaxBaseModuleClass):
         # switching time
         self.switch_time_unconstr = self.param(
             "switch_time_unconstr",
-            lambda rng, shape: 7 + 0.5 * jnp.randn(rng, shape),
+            lambda rng, shape: 7 + 0.5 * jax.random.normal(rng, shape),
             (self.n_input,),
         )
 
@@ -208,52 +212,65 @@ class JaxVELOVAE(JaxBaseModuleClass):
         if self.gamma_unconstr_init is None:
             self.gamma_mean_unconstr = self.param(
                 "gamma_mean_unconstr",
-                lambda shape: -1 * jnp.ones(shape),
+                lambda _, shape: -1 * jnp.ones(shape),
                 (self.n_input,),
             )
         else:
             self.gamma_mean_unconstr = self.variable(
-                "gamma_mean_unconstr", lambda: jnp.from_numpy(self.gamma_unconstr_init)
+                _STATE_COLLECTION,
+                "gamma_mean_unconstr",
+                lambda: jnp.asarray(self.gamma_unconstr_init),
             ).value
 
         # splicing
         # first samples around 1
         self.beta_mean_unconstr = self.param(
-            "beta_mean_unconstr", lambda shape: 0.5 * jnp.ones(shape), (self.n_input,)
+            "beta_mean_unconstr",
+            lambda _, shape: 0.5 * jnp.ones(shape),
+            (self.n_input,),
         )
 
         # transcription
         if self.alpha_unconstr_init is None:
-            self.alpha_unconstr_init = self.param(
-                "alpha_unconstr_init",
-                lambda shape: 0 * jnp.ones(shape),
+            self.alpha_unconstr = self.param(
+                "alpha_unconstr",
+                lambda _, shape: 0 * jnp.ones(shape),
                 (self.n_input,),
             )
         else:
-            self.alpha_unconstr_init = self.variable(
-                "alpha_unconstr_init", lambda: jnp.from_numpy(self.alpha_unconstr_init)
+            self.alpha_unconstr = self.variable(
+                _STATE_COLLECTION,
+                "alpha_unconstr",
+                lambda: jnp.asarray(self.alpha_unconstr_init),
             ).value
 
         if self.alpha_1_unconstr_init is None:
             self.alpha_1_unconstr = self.variable(
-                "alpha_1_unconstr", lambda shape: 0 * jnp.ones(shape), (self.n_input,)
+                _STATE_COLLECTION,
+                "alpha_1_unconstr",
+                lambda shape: 0 * jnp.ones(shape),
+                (self.n_input,),
             ).value
         else:
-            self.alpha_1_unconstr = self.parameter(
-                "alpha_1_unconstr", lambda: jnp.from_numpy(self.alpha_1_unconstr_init)
+            self.alpha_1_unconstr = self.param(
+                "alpha_1_unconstr", lambda _: jnp.asarray(self.alpha_1_unconstr_init)
             )
         if self.lambda_alpha_unconstr_init is None:
             self.lambda_alpha_unconstr = self.variable(
-                "lambda_alpha_unconstr", lambda shape: 0 * jnp.ones(shape), (self.n_input,)
+                _STATE_COLLECTION,
+                "lambda_alpha_unconstr",
+                lambda shape: 0 * jnp.ones(shape),
+                (self.n_input,),
             ).value
         else:
-            self.lambda_alpha_unconstr = self.parameter(
-                "lambda_alpha_unconstr", lambda: jnp.from_numpy(self.lambda_alpha_unconstr_init)
+            self.lambda_alpha_unconstr = self.param(
+                "lambda_alpha_unconstr",
+                lambda _: jnp.asarray(self.lambda_alpha_unconstr_init),
             )
         # likelihood dispersion
         # for now, with normal dist, this is just the variance
         self.scale_unconstr = self.param(
-            "scale_unconstr", lambda shape: -1 * jnp.ones(shape), (self.n_genes, 4)
+            "scale_unconstr", lambda _, shape: -1 * jnp.ones(shape), (self.n_genes, 4)
         )
 
         use_batch_norm_encoder = use_batch_norm == "encoder" or use_batch_norm == "both"
@@ -288,6 +305,10 @@ class JaxVELOVAE(JaxBaseModuleClass):
         )
         return input_dict
 
+    @property
+    def required_rngs(self):  # noqa: D102
+        return ("params", "dropout", "z")
+
     def _get_generative_input(self, ndarrays, inference_outputs):
         z = inference_outputs["z"]
         gamma = inference_outputs["gamma"]
@@ -319,13 +340,13 @@ class JaxVELOVAE(JaxBaseModuleClass):
         """
         spliced_ = spliced
         unspliced_ = unspliced
-        encoder_input = jnp.cat((spliced_, unspliced_), axis=-1)
+        encoder_input = jnp.concatenate((spliced_, unspliced_), axis=-1)
 
-        qz_m, qz_v, z = self.z_encoder(encoder_input)
+        qz_m, qz_v, z = self.z_encoder(encoder_input, training=self.training)
         qz = Normal(qz_m, qz_v)
 
         if n_samples > 1:
-            z = qz.rsample((n_samples,))
+            z = qz.rsample(self.make_rng("z"), (n_samples,))
 
         gamma, beta, alpha, alpha_1, lambda_alpha = self._get_rates()
 
@@ -362,9 +383,9 @@ class JaxVELOVAE(JaxBaseModuleClass):
         """Runs the generative model."""
         decoder_input = z
         px_pi_alpha, px_rho, px_tau = self.decoder(
-            decoder_input,
+            decoder_input, training=self.training
         )
-        px_pi = Dirichlet(px_pi_alpha).rsample()
+        px_pi = Dirichlet(px_pi_alpha).rsample(self.make_rng(z))
 
         scale_unconstr = self.scale_unconstr
         scale = nn.softplus(scale_unconstr)

@@ -13,9 +13,8 @@ from scipy.stats import ttest_ind
 from scvi._compat import Literal
 from scvi.data import AnnDataManager
 from scvi.data.fields import LayerField
-from scvi.dataloaders import AnnDataLoader, DataSplitter
+from scvi.dataloaders import AnnDataLoader
 from scvi.model.base import BaseModelClass, JaxTrainingMixin, VAEMixin
-from scvi.train import TrainingPlan, TrainRunner
 from scvi.utils._docstrings import setup_anndata_dsp
 
 from ._constants import REGISTRY_KEYS
@@ -30,7 +29,7 @@ def _softplus_inverse(x: np.ndarray) -> np.ndarray:
     return x_inv
 
 
-class JaxVELOVI(VAEMixin, JaxTrainingMixin, BaseModelClass):
+class JaxVELOVI(JaxTrainingMixin, BaseModelClass):
     """
     Velocity Variational Inference
 
@@ -105,8 +104,8 @@ class JaxVELOVI(VAEMixin, JaxTrainingMixin, BaseModelClass):
 
         self.module = JaxVELOVAE(
             n_input=self.summary_stats["n_vars"],
-            switch_spliced=ms_upper,
-            switch_unspliced=us_upper,
+            switch_spliced_init=ms_upper,
+            switch_unspliced_init=us_upper,
             time_dep_transcription_rate=time_dep_transcription_rate,
             n_hidden=n_hidden,
             n_latent=n_latent,
@@ -176,38 +175,25 @@ class JaxVELOVI(VAEMixin, JaxTrainingMixin, BaseModelClass):
         **trainer_kwargs
             Other keyword args for :class:`~scvi.train.Trainer`.
         """
-        user_plan_kwargs = (
-            plan_kwargs.copy() if isinstance(plan_kwargs, dict) else dict()
+        plan_kwargs = plan_kwargs if isinstance(plan_kwargs, dict) else dict()
+        plan_kwargs.update(
+            {
+                "lr": lr,
+                "weight_decay": weight_decay,
+                "max_norm": gradient_clip_val,
+                "optimizer": "AdamW",
+            }
         )
-        plan_kwargs = dict(lr=lr, weight_decay=weight_decay, optimizer="AdamW")
-        plan_kwargs.update(user_plan_kwargs)
-
-        user_train_kwargs = trainer_kwargs.copy()
-        trainer_kwargs = dict(gradient_clip_val=gradient_clip_val)
-        trainer_kwargs.update(user_train_kwargs)
-
-        data_splitter = DataSplitter(
-            self.adata_manager,
+        super().train(
+            max_epochs=max_epochs,
+            use_gpu=use_gpu,
             train_size=train_size,
             validation_size=validation_size,
             batch_size=batch_size,
-            use_gpu=use_gpu,
-        )
-        training_plan = TrainingPlan(self.module, **plan_kwargs)
-
-        es = "early_stopping"
-        trainer_kwargs[es] = (
-            early_stopping if es not in trainer_kwargs.keys() else trainer_kwargs[es]
-        )
-        runner = TrainRunner(
-            self,
-            training_plan=training_plan,
-            data_splitter=data_splitter,
-            max_epochs=max_epochs,
-            use_gpu=use_gpu,
+            early_stopping=early_stopping,
+            plan_kwargs=plan_kwargs,
             **trainer_kwargs,
         )
-        return runner()
 
     @torch.no_grad()
     def get_state_assignment(
