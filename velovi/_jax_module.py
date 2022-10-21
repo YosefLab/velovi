@@ -1,9 +1,11 @@
+from json import encoder
 from typing import Callable, Iterable, Optional
 
 import numpy as np
 from scvi._compat import Literal
 from scvi.module.base import JaxBaseModuleClass, LossRecorder, flax_configure
 from flax import linen as nn
+
 from numpyro.distributions import (
     Categorical,
     Dirichlet,
@@ -11,6 +13,8 @@ from numpyro.distributions import (
     Normal,
     kl_divergence as kl,
 )
+
+# from distrax import Categorical, MixtureSameFamily, Normal as Normal
 import jax.numpy as jnp
 import jax
 
@@ -72,8 +76,9 @@ class _Encoder(nn.Module):
         )(x)
         mu = nn.Dense(features=self.n_latent)(x)
         var = nn.softplus(nn.Dense(features=self.n_latent)(x)) + self.var_eps
-        latent = Normal(mu, var).rsample(self.make_rng(_LATENT_RNG_KEY))
-        return mu, var, latent
+        qz = Normal(mu, var, validate_args=False)
+        z = qz.rsample(self.make_rng(_LATENT_RNG_KEY))
+        return qz, z
 
 
 class _DecoderVELOVI(nn.Module):
@@ -108,6 +113,7 @@ class _DecoderVELOVI(nn.Module):
 
     @nn.compact
     def __call__(self, z: jnp.ndarray, training: Optional[bool] = None):
+        training = nn.merge_param("training", self.training, training)
         rho_first = _MLP(
             n_layers=self.n_layers,
             n_hidden=self.n_hidden,
@@ -193,12 +199,12 @@ class JaxVELOVAE(JaxBaseModuleClass):
             _STATE_COLLECTION,
             "switch_spliced",
             lambda: jnp.asarray(self.switch_spliced_init),
-        ).value
+        )
         self.switch_unspliced = self.variable(
             _STATE_COLLECTION,
             "switch_unspliced",
             lambda: jnp.asarray(self.switch_unspliced_init),
-        ).value
+        )
 
         self.n_genes = self.n_input * 2
 
@@ -217,11 +223,10 @@ class JaxVELOVAE(JaxBaseModuleClass):
                 (self.n_input,),
             )
         else:
-            self.gamma_mean_unconstr = self.variable(
-                _STATE_COLLECTION,
+            self.gamma_mean_unconstr = self.param(
                 "gamma_mean_unconstr",
-                lambda: jnp.asarray(self.gamma_unconstr_init),
-            ).value
+                lambda _: jnp.asarray(self.gamma_unconstr_init),
+            )
 
         # splicing
         # first samples around 1
@@ -239,39 +244,28 @@ class JaxVELOVAE(JaxBaseModuleClass):
                 (self.n_input,),
             )
         else:
-            self.alpha_unconstr = self.variable(
-                _STATE_COLLECTION,
+            self.alpha_unconstr = self.param(
                 "alpha_unconstr",
-                lambda: jnp.asarray(self.alpha_unconstr_init),
-            ).value
+                lambda _: jnp.asarray(self.alpha_unconstr_init),
+            )
 
         if self.alpha_1_unconstr_init is None:
-            self.alpha_1_unconstr = self.variable(
-                _STATE_COLLECTION,
-                "alpha_1_unconstr",
-                lambda shape: 0 * jnp.ones(shape),
-                (self.n_input,),
-            ).value
+            self.alpha_1_unconstr = 0
         else:
             self.alpha_1_unconstr = self.param(
                 "alpha_1_unconstr", lambda _: jnp.asarray(self.alpha_1_unconstr_init)
             )
         if self.lambda_alpha_unconstr_init is None:
-            self.lambda_alpha_unconstr = self.variable(
-                _STATE_COLLECTION,
-                "lambda_alpha_unconstr",
-                lambda shape: 0 * jnp.ones(shape),
-                (self.n_input,),
-            ).value
+            self.lambda_alpha_unconstr = 0
         else:
             self.lambda_alpha_unconstr = self.param(
                 "lambda_alpha_unconstr",
-                lambda _: jnp.asarray(self.lambda_alpha_unconstr_init),
+                lambda _: self.lambda_alpha_unconstr_init,
             )
         # likelihood dispersion
         # for now, with normal dist, this is just the variance
         self.scale_unconstr = self.param(
-            "scale_unconstr", lambda _, shape: -1 * jnp.ones(shape), (self.n_genes, 4)
+            "scale_unconstr", lambda _, shape: -1 * jnp.ones(shape), (self.n_genes,)
         )
 
         use_batch_norm_encoder = use_batch_norm == "encoder" or use_batch_norm == "both"
@@ -343,8 +337,7 @@ class JaxVELOVAE(JaxBaseModuleClass):
         unspliced_ = unspliced
         encoder_input = jnp.concatenate((spliced_, unspliced_), axis=-1)
 
-        qz_m, qz_v, z = self.z_encoder(encoder_input, training=self.training)
-        qz = Normal(qz_m, qz_v)
+        qz, z = self.z_encoder(encoder_input, training=self.training)
 
         if n_samples > 1:
             z = qz.rsample(self.make_rng(_LATENT_RNG_KEY), (n_samples,))
@@ -353,8 +346,7 @@ class JaxVELOVAE(JaxBaseModuleClass):
 
         outputs = dict(
             z=z,
-            qz_m=qz_m,
-            qz_v=qz_v,
+            qz=qz,
             gamma=gamma,
             beta=beta,
             alpha=alpha,
@@ -380,13 +372,34 @@ class JaxVELOVAE(JaxBaseModuleClass):
 
         return gamma, beta, alpha, alpha_1, lambda_alpha
 
+    def _get_rates_from_params(self):
+        # globals
+        # degradation
+        gamma = jnp.clip(nn.softplus(self.params["gamma_mean_unconstr"]), 0, 50)
+        # splicing
+        beta = jnp.clip(nn.softplus(self.params["beta_mean_unconstr"]), 0, 50)
+        # transcription
+        alpha = jnp.clip(nn.softplus(self.params["alpha_unconstr"]), 0, 50)
+        if self.time_dep_transcription_rate:
+            alpha_1 = jnp.clip(nn.softplus(self.params["alpha_1_unconstr"]), 0, 50)
+            lambda_alpha = jnp.clip(
+                nn.softplus(self.params["lambda_alpha_unconstr"]), 0, 50
+            )
+        else:
+            alpha_1 = jnp.array([0.0])
+            lambda_alpha = jnp.array([0.0])
+
+        return gamma, beta, alpha, alpha_1, lambda_alpha
+
     def generative(self, z, gamma, beta, alpha, alpha_1, lambda_alpha):
         """Runs the generative model."""
         decoder_input = z
         px_pi_alpha, px_rho, px_tau = self.decoder(
             decoder_input, training=self.training
         )
-        px_pi = Dirichlet(px_pi_alpha).rsample(self.make_rng(_LATENT_RNG_KEY))
+        px_pi = Dirichlet(px_pi_alpha, validate_args=False).rsample(
+            self.make_rng(_LATENT_RNG_KEY)
+        )
 
         scale_unconstr = self.scale_unconstr
         scale = nn.softplus(scale_unconstr)
@@ -420,13 +433,11 @@ class JaxVELOVAE(JaxBaseModuleClass):
         inference_outputs,
         generative_outputs,
         kl_weight: float = 1.0,
-        n_obs: float = 1.0,
     ):
         spliced = ndarrays[REGISTRY_KEYS.X_KEY]
         unspliced = ndarrays[REGISTRY_KEYS.U_KEY]
 
-        qz_m = inference_outputs["qz_m"]
-        qz_v = inference_outputs["qz_v"]
+        qz = inference_outputs["qz"]
 
         px_pi = generative_outputs["px_pi"]
         px_pi_alpha = generative_outputs["px_pi_alpha"]
@@ -435,7 +446,7 @@ class JaxVELOVAE(JaxBaseModuleClass):
         mixture_dist_s = generative_outputs["mixture_dist_s"]
         mixture_dist_u = generative_outputs["mixture_dist_u"]
 
-        kl_divergence_z = kl(Normal(qz_m, jnp.sqrt(qz_v)), Normal(0, 1)).sum(axis=1)
+        kl_divergence_z = kl(qz, Normal(0, 1, validate_args=False)).sum(axis=1)
 
         reconst_loss_s = -mixture_dist_s.log_prob(spliced)
         reconst_loss_u = -mixture_dist_u.log_prob(unspliced)
@@ -443,8 +454,12 @@ class JaxVELOVAE(JaxBaseModuleClass):
         reconst_loss = reconst_loss_u.sum(axis=-1) + reconst_loss_s.sum(axis=-1)
 
         kl_pi = kl(
-            Dirichlet(px_pi_alpha),
-            Dirichlet(self.dirichlet_concentration * jnp.ones_like(px_pi)),
+            Dirichlet(px_pi_alpha, validate_args=False),
+            Dirichlet(
+                self.dirichlet_concentration
+                * jnp.ones((px_pi.shape[-2], px_pi.shape[-1])),
+                validate_args=False,
+            ),
         ).sum(axis=-1)
 
         # local loss
@@ -454,16 +469,9 @@ class JaxVELOVAE(JaxBaseModuleClass):
         local_loss = jnp.mean(reconst_loss + weighted_kl_local)
 
         # combine local and global
-        global_loss = 0
-        loss = (
-            local_loss
-            + self.penalty_scale * (1 - kl_weight) * end_penalty
-            + (1 / n_obs) * kl_weight * (global_loss)
-        )
+        loss = local_loss + self.penalty_scale * (1 - kl_weight) * end_penalty
 
-        loss_recoder = LossRecorder(
-            loss, reconst_loss, kl_local, jnp.array([global_loss])
-        )
+        loss_recoder = LossRecorder(loss, reconst_loss, kl_local)
 
         return loss_recoder
 
@@ -481,9 +489,6 @@ class JaxVELOVAE(JaxBaseModuleClass):
     ) -> jnp.ndarray:
 
         t_s = jnp.clip(nn.softplus(self.switch_time_unconstr), 0, self.t_max)
-
-        n_cells = px_pi.shape[0]
-
         # component dist
         comp_dist = Categorical(probs=px_pi)
 
@@ -493,14 +498,12 @@ class JaxVELOVAE(JaxBaseModuleClass):
         )
 
         if self.time_dep_transcription_rate:
-            mean_u_ind_steady = jnp.resize((alpha_1 / beta), (n_cells, self.n_input))
-            mean_s_ind_steady = jnp.resize((alpha_1 / gamma), (n_cells, self.n_input))
+            mean_u_ind_steady = (alpha_1 / beta) * jnp.ones_like(mean_u_ind)
+            mean_s_ind_steady = (alpha_1 / gamma) * jnp.ones_like(mean_u_ind)
         else:
-            mean_u_ind_steady = jnp.resize((alpha / beta), (n_cells, self.n_input))
-            mean_s_ind_steady = jnp.resize((alpha / gamma), (n_cells, self.n_input))
-        scale_u = jnp.sqrt(
-            jnp.resize(scale[: self.n_input, :], (n_cells, self.n_input, 4))
-        )
+            mean_u_ind_steady = (alpha / beta) * jnp.ones_like(mean_u_ind)
+            mean_s_ind_steady = (alpha / gamma) * jnp.ones_like(mean_u_ind)
+        scale_u = jnp.sqrt(scale[: self.n_input])
 
         # repression
         u_0, s_0 = self._get_induction_unspliced_spliced(
@@ -517,12 +520,10 @@ class JaxVELOVAE(JaxBaseModuleClass):
         )
         mean_u_rep_steady = jnp.zeros_like(mean_u_ind)
         mean_s_rep_steady = jnp.zeros_like(mean_u_ind)
-        scale_s = jnp.resize(
-            jnp.sqrt(scale[self.n_input :, :]), (n_cells, self.n_input, 4)
-        )
+        scale_s = jnp.sqrt(scale[self.n_input :])
 
-        end_penalty = (jnp.square(u_0 - self.switch_unspliced)).sum() + (
-            jnp.square(s_0 - self.switch_spliced)
+        end_penalty = (jnp.square(u_0 - self.switch_unspliced.value)).sum() + (
+            jnp.square(s_0 - self.switch_spliced.value)
         ).sum()
 
         # unspliced
@@ -535,34 +536,37 @@ class JaxVELOVAE(JaxBaseModuleClass):
             ),
             axis=2,
         )
+        # dims by 4
         scale_u = jnp.stack(
             (
-                scale_u[..., 0],
-                scale_u[..., 0],
-                scale_u[..., 0],
-                0.1 * scale_u[..., 0],
+                scale_u,
+                scale_u,
+                scale_u,
+                0.1 * scale_u,
             ),
-            axis=2,
+            axis=1,
         )
-        dist_u = Normal(mean_u, scale_u)
-        mixture_dist_u = MixtureSameFamily(comp_dist, dist_u)
+        dist_u = Normal(mean_u, scale_u, validate_args=False)
+        mixture_dist_u = MixtureSameFamily(comp_dist, dist_u, validate_args=False)
 
         # spliced
         mean_s = jnp.stack(
             (mean_s_ind, mean_s_ind_steady, mean_s_rep, mean_s_rep_steady),
             axis=2,
         )
+        # dims by 4
         scale_s = jnp.stack(
             (
-                scale_s[..., 0],
-                scale_s[..., 0],
-                scale_s[..., 0],
-                0.1 * scale_s[..., 0],
+                scale_s,
+                scale_s,
+                scale_s,
+                0.1 * scale_s,
             ),
-            axis=2,
+            axis=1,
         )
-        dist_s = Normal(mean_s, scale_s)
-        mixture_dist_s = MixtureSameFamily(comp_dist, dist_s)
+        # scale gets broadcasted
+        dist_s = Normal(mean_s, scale_s, validate_args=False)
+        mixture_dist_s = MixtureSameFamily(comp_dist, dist_s, validate_args=False)
 
         return mixture_dist_s, mixture_dist_u, end_penalty
 
