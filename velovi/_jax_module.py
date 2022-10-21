@@ -15,6 +15,7 @@ from numpyro.distributions import (
     kl_divergence as kl,
 )
 from jax.scipy.special import logsumexp
+from tensorflow_probability.substrates import jax as tfp
 
 # from distrax import Dirichlet
 import jax.numpy as jnp
@@ -25,6 +26,8 @@ from ._constants import REGISTRY_KEYS
 _STATE_COLLECTION = "constants"
 _LATENT_RNG_KEY = "latent"
 
+tfd = tfp.distributions
+Dirichlet_tfp = tfd.Dirichlet
 
 # def _get_max(max_, array):
 #     max_ = jnp.maximum(max_, array)
@@ -39,6 +42,11 @@ def logsumexp_minus1(arrays):
     return (
         jnp.log(jnp.sum(jnp.exp(arrays - max_), axis=-1, keepdims=True)) + max_
     ).squeeze(axis=-1)
+
+
+def softplus(x, threshold=20):
+    """Softplus function that avoids overflow."""
+    return jnp.where(x < threshold, jnp.log1p(jnp.exp(x)), x)
 
 
 class _MLP(nn.Module):
@@ -92,7 +100,7 @@ class _Encoder(nn.Module):
             training=training,
         )(x)
         mu = nn.Dense(features=self.n_latent)(x)
-        var = nn.softplus(nn.Dense(features=self.n_latent)(x)) + self.var_eps
+        var = softplus(nn.Dense(features=self.n_latent)(x)) + self.var_eps
         qz = Normal(mu, var, validate_args=False)
         z = qz.rsample(self.make_rng(_LATENT_RNG_KEY))
         return qz, z
@@ -152,7 +160,7 @@ class _DecoderVELOVI(nn.Module):
             layer_norm=self.layer_norm,
             training=training,
         )(z)
-        px_pi = nn.softplus(nn.DenseGeneral(features=(self.n_output, 4))(pi_first))
+        px_pi = softplus(nn.DenseGeneral(features=(self.n_output, 4))(pi_first))
 
         return px_pi, px_rho, px_tau
 
@@ -375,14 +383,14 @@ class JaxVELOVAE(JaxBaseModuleClass):
     def _get_rates(self):
         # globals
         # degradation
-        gamma = jnp.clip(nn.softplus(self.gamma_mean_unconstr), 0, 50)
+        gamma = jnp.clip(softplus(self.gamma_mean_unconstr), 0, 50)
         # splicing
-        beta = jnp.clip(nn.softplus(self.beta_mean_unconstr), 0, 50)
+        beta = jnp.clip(softplus(self.beta_mean_unconstr), 0, 50)
         # transcription
-        alpha = jnp.clip(nn.softplus(self.alpha_unconstr), 0, 50)
+        alpha = jnp.clip(softplus(self.alpha_unconstr), 0, 50)
         if self.time_dep_transcription_rate:
-            alpha_1 = jnp.clip(nn.softplus(self.alpha_1_unconstr), 0, 50)
-            lambda_alpha = jnp.clip(nn.softplus(self.lambda_alpha_unconstr), 0, 50)
+            alpha_1 = jnp.clip(softplus(self.alpha_1_unconstr), 0, 50)
+            lambda_alpha = jnp.clip(softplus(self.lambda_alpha_unconstr), 0, 50)
         else:
             alpha_1 = self.alpha_1_unconstr
             lambda_alpha = self.lambda_alpha_unconstr
@@ -392,15 +400,15 @@ class JaxVELOVAE(JaxBaseModuleClass):
     def _get_rates_from_params(self):
         # globals
         # degradation
-        gamma = jnp.clip(nn.softplus(self.params["gamma_mean_unconstr"]), 0, 50)
+        gamma = jnp.clip(softplus(self.params["gamma_mean_unconstr"]), 0, 50)
         # splicing
-        beta = jnp.clip(nn.softplus(self.params["beta_mean_unconstr"]), 0, 50)
+        beta = jnp.clip(softplus(self.params["beta_mean_unconstr"]), 0, 50)
         # transcription
-        alpha = jnp.clip(nn.softplus(self.params["alpha_unconstr"]), 0, 50)
+        alpha = jnp.clip(softplus(self.params["alpha_unconstr"]), 0, 50)
         if self.time_dep_transcription_rate:
-            alpha_1 = jnp.clip(nn.softplus(self.params["alpha_1_unconstr"]), 0, 50)
+            alpha_1 = jnp.clip(softplus(self.params["alpha_1_unconstr"]), 0, 50)
             lambda_alpha = jnp.clip(
-                nn.softplus(self.params["lambda_alpha_unconstr"]), 0, 50
+                softplus(self.params["lambda_alpha_unconstr"]), 0, 50
             )
         else:
             alpha_1 = jnp.array([0.0])
@@ -414,24 +422,24 @@ class JaxVELOVAE(JaxBaseModuleClass):
         px_pi_alpha, px_rho, px_tau = self.decoder(
             decoder_input, training=self.training
         )
-        # px_pi = Dirichlet(px_pi_alpha, validate_args=False).rsample(
+        px_pi = Dirichlet_tfp(px_pi_alpha, validate_args=False).sample(
+            seed=self.make_rng(_LATENT_RNG_KEY)
+        )
+        # Laplace approximation
+        # log_px_pi_alpha = np.log(px_pi_alpha)
+        # mean = log_px_pi_alpha - np.mean(log_px_pi_alpha, axis=-1, keepdims=True)
+        # k = 4
+        # inv_px_pi_alpha = 1 / px_pi_alpha
+        # variance = inv_px_pi_alpha * (1 - 2 / k) + inv_px_pi_alpha.sum(
+        #     -1, keepdims=True
+        # ) * (1 / k**2)
+        # px_pi_unconstrained = Normal(mean, jnp.sqrt(variance)).rsample(
         #     self.make_rng(_LATENT_RNG_KEY)
         # )
-        # Laplace approximation
-        log_px_pi_alpha = np.log(px_pi_alpha)
-        mean = log_px_pi_alpha - np.mean(log_px_pi_alpha, axis=-1, keepdims=True)
-        k = 4
-        inv_px_pi_alpha = 1 / px_pi_alpha
-        variance = inv_px_pi_alpha * (1 - 2 / k) + inv_px_pi_alpha.sum(
-            -1, keepdims=True
-        ) * (1 / k**2)
-        px_pi_unconstrained = Normal(mean, jnp.sqrt(variance)).rsample(
-            self.make_rng(_LATENT_RNG_KEY)
-        )
-        px_pi = nn.softmax(px_pi_unconstrained, axis=-1)
+        # px_pi = nn.softmax(px_pi_unconstrained, axis=-1)
 
         scale_unconstr = self.scale_unconstr
-        scale = nn.softplus(scale_unconstr)
+        scale = softplus(scale_unconstr)
 
         dist_s, dist_u, comp_dist, end_penalty = self.get_px(
             px_pi,
@@ -537,7 +545,7 @@ class JaxVELOVAE(JaxBaseModuleClass):
         lambda_alpha,
     ) -> jnp.ndarray:
 
-        t_s = jnp.clip(nn.softplus(self.switch_time_unconstr), 0, self.t_max)
+        t_s = jnp.clip(softplus(self.switch_time_unconstr), 0, self.t_max)
         # component dist
         comp_dist = Categorical(probs=px_pi)
 
