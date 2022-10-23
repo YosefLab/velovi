@@ -10,8 +10,9 @@ import chex
 from numpyro.distributions import (
     Categorical,
     Dirichlet,
-    # MixtureSameFamily,
+    MixtureSameFamily,
     Normal,
+    Gamma,
     kl_divergence as kl,
 )
 from jax.scipy.special import logsumexp
@@ -422,26 +423,18 @@ class JaxVELOVAE(JaxBaseModuleClass):
         px_pi_alpha, px_rho, px_tau = self.decoder(
             decoder_input, training=self.training
         )
-        px_pi = Dirichlet_tfp(px_pi_alpha, validate_args=False).sample(
-            seed=self.make_rng(_LATENT_RNG_KEY)
-        )
-        # Laplace approximation
-        # log_px_pi_alpha = np.log(px_pi_alpha)
-        # mean = log_px_pi_alpha - np.mean(log_px_pi_alpha, axis=-1, keepdims=True)
-        # k = 4
-        # inv_px_pi_alpha = 1 / px_pi_alpha
-        # variance = inv_px_pi_alpha * (1 - 2 / k) + inv_px_pi_alpha.sum(
-        #     -1, keepdims=True
-        # ) * (1 / k**2)
-        # px_pi_unconstrained = Normal(mean, jnp.sqrt(variance)).rsample(
+        # px_pi = Gamma(px_pi_alpha, 10, validate_args=False).rsample(
         #     self.make_rng(_LATENT_RNG_KEY)
         # )
-        # px_pi = nn.softmax(px_pi_unconstrained, axis=-1)
+        # px_pi = px_pi / jnp.sum(px_pi, axis=-1, keepdims=True)
+
+        # For now just do MAP estimation for pi
+        px_pi = px_pi_alpha / jnp.sum(px_pi_alpha, axis=-1, keepdims=True)
 
         scale_unconstr = self.scale_unconstr
         scale = softplus(scale_unconstr)
 
-        dist_s, dist_u, comp_dist, end_penalty = self.get_px(
+        mixture_dist_s, mixture_dist_u, end_penalty = self.get_px(
             px_pi,
             px_rho,
             px_tau,
@@ -459,9 +452,8 @@ class JaxVELOVAE(JaxBaseModuleClass):
             px_tau=px_tau,
             scale=scale,
             px_pi_alpha=px_pi_alpha,
-            dist_s=dist_s,
-            dist_u=dist_u,
-            comp_dist=comp_dist,
+            mixture_dist_s=mixture_dist_s,
+            mixture_dist_u=mixture_dist_u,
             end_penalty=end_penalty,
         )
 
@@ -481,32 +473,13 @@ class JaxVELOVAE(JaxBaseModuleClass):
         px_pi_alpha = generative_outputs["px_pi_alpha"]
 
         end_penalty = generative_outputs["end_penalty"]
-        dist_s = generative_outputs["dist_s"]
-        dist_u = generative_outputs["dist_u"]
-        comp_dist = generative_outputs["comp_dist"]
+        mixture_dist_s = generative_outputs["mixture_dist_s"]
+        mixture_dist_u = generative_outputs["mixture_dist_u"]
 
         kl_divergence_z = kl(qz, Normal(0, 1, validate_args=False)).sum(axis=1)
 
-        vmap_log_prob_fn = jax.vmap(
-            lambda mean, variance, value: Normal(mean, jnp.sqrt(variance)).log_prob(
-                value
-            ),
-            in_axes=(-1, -1, None),
-            out_axes=-1,
-        )
-
-        logits = comp_dist.logits
-        chex.assert_equal_shape([px_pi_alpha, logits])
-
-        reconst_loss_s = logsumexp(
-            vmap_log_prob_fn(dist_s.mean, dist_s.variance, spliced) * logits, axis=-1
-        )
-        reconst_loss_u = logsumexp(
-            vmap_log_prob_fn(dist_u.mean, dist_u.variance, unspliced) * logits, axis=-1
-        )
-
-        # reconst_loss_s = -mixture_dist_s.log_prob(spliced)
-        # reconst_loss_u = -mixture_dist_u.log_prob(unspliced)
+        reconst_loss_s = -mixture_dist_s.log_prob(spliced)
+        reconst_loss_u = -mixture_dist_u.log_prob(unspliced)
 
         reconst_loss = reconst_loss_u.sum(axis=-1) + reconst_loss_s.sum(axis=-1)
 
@@ -518,6 +491,17 @@ class JaxVELOVAE(JaxBaseModuleClass):
                 validate_args=False,
             ),
         ).sum(axis=-1)
+        # kl_pi = (
+        #     Dirichlet(
+        #         self.dirichlet_concentration
+        #         * jnp.ones((px_pi.shape[-2], px_pi.shape[-1])),
+        #         validate_args=False,
+        #     )
+        #     .log_prob(px_pi)
+        #     .sum(axis=-1)
+        #     * -1
+        # )
+        chex.assert_equal_shape([kl_pi, kl_divergence_z])
 
         # local loss
         kl_local = kl_divergence_z + kl_pi
@@ -604,7 +588,7 @@ class JaxVELOVAE(JaxBaseModuleClass):
             axis=1,
         )
         dist_u = Normal(mean_u, scale_u, validate_args=False)
-        # mixture_dist_u = MixtureSameFamily(comp_dist, dist_u, validate_args=False)
+        mixture_dist_u = MixtureSameFamily(comp_dist, dist_u, validate_args=False)
 
         # spliced
         mean_s = jnp.stack(
@@ -623,9 +607,9 @@ class JaxVELOVAE(JaxBaseModuleClass):
         )
         # scale gets broadcasted
         dist_s = Normal(mean_s, scale_s, validate_args=False)
-        # mixture_dist_s = MixtureSameFamily(comp_dist, dist_s, validate_args=False)
+        mixture_dist_s = MixtureSameFamily(comp_dist, dist_s, validate_args=False)
 
-        return dist_s, dist_u, comp_dist, end_penalty
+        return mixture_dist_s, mixture_dist_u, end_penalty
 
     def _get_induction_unspliced_spliced(
         self, alpha, alpha_1, lambda_alpha, beta, gamma, t, eps=1e-6
