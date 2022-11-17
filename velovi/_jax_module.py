@@ -5,20 +5,16 @@ import numpy as np
 from scvi._compat import Literal
 from scvi.module.base import JaxBaseModuleClass, LossRecorder, flax_configure
 from flax import linen as nn
-
 import chex
 from numpyro.distributions import (
     Categorical,
-    Dirichlet,
+    Dirichlet as DirichletNP,
     MixtureSameFamily,
     Normal,
-    Gamma,
     kl_divergence as kl,
 )
-from jax.scipy.special import logsumexp
 from tensorflow_probability.substrates import jax as tfp
 
-# from distrax import Dirichlet
 import jax.numpy as jnp
 import jax
 
@@ -27,22 +23,28 @@ from ._constants import REGISTRY_KEYS
 _STATE_COLLECTION = "constants"
 _LATENT_RNG_KEY = "latent"
 
-tfd = tfp.distributions
-Dirichlet_tfp = tfd.Dirichlet
+Dirichlet = tfp.distributions.Dirichlet
+
+from scvi.module._jaxvae import Dense
+from functools import partial
+from jax import custom_jvp
 
 # def _get_max(max_, array):
 #     max_ = jnp.maximum(max_, array)
 #     return max_, 0
 
 
-def logsumexp_minus1(arrays):
-    """logsumexp_minus1 for multiple arrays."""
-    max_ = jnp.max(arrays, axis=-1, keepdims=True)
-    # max_, _ = jax.lax.scan(_get_max, arrays[..., 0], jnp.transpose(arrays, (2, 0, 1)))
-    max_ = max_[..., jnp.newaxis]
-    return (
-        jnp.log(jnp.sum(jnp.exp(arrays - max_), axis=-1, keepdims=True)) + max_
-    ).squeeze(axis=-1)
+# @partial(custom_jvp, nondiff_argnums=(0,))
+# def dirichlet_sample(key, alpha):
+#     return Dirichlet(alpha + 1).sample(seed=key)
+
+
+# @dirichlet_sample.defjvp
+# def dirichlet_sample_jvp(key, primals, tangents):
+#     (alpha,) = primals
+#     (alpha_dot,) = tangents
+#     dirichlet = partial(jax.random.dirichlet, key)
+#     return jax.jvp(dirichlet, primals, tangents)
 
 
 def softplus(x, threshold=20):
@@ -59,20 +61,21 @@ class _MLP(nn.Module):
     batch_norm: bool = True
     layer_norm: bool = True
     training: Optional[bool] = None
+    activation_fn: Callable = nn.relu
 
     @nn.compact
     def __call__(self, x, training: Optional[bool] = None):
         training = nn.merge_param("training", self.training, training)
         is_eval = not training
         for _ in range(self.n_layers):
-            x = nn.Dense(features=self.n_hidden)(x)
+            x = Dense(features=self.n_hidden)(x)
             if self.batch_norm:
                 x = nn.BatchNorm(
                     use_running_average=is_eval, momentum=0.99, epsilon=0.001
                 )(x)
             if self.layer_norm:
                 x = nn.LayerNorm(use_bias=False, use_scale=False)(x)
-            x = nn.relu(x)
+            x = self.activation_fn(x)
             x = nn.Dropout(rate=self.dropout_rate, deterministic=is_eval)(x)
         return x
 
@@ -100,7 +103,7 @@ class _Encoder(nn.Module):
             layer_norm=self.layer_norm,
             training=training,
         )(x)
-        mu = nn.Dense(features=self.n_latent)(x)
+        mu = Dense(features=self.n_latent)(x)
         var = softplus(nn.Dense(features=self.n_latent)(x)) + self.var_eps
         qz = Normal(mu, var, validate_args=False)
         z = qz.rsample(self.make_rng(_LATENT_RNG_KEY))
@@ -149,8 +152,8 @@ class _DecoderVELOVI(nn.Module):
             training=training,
         )(z)
 
-        px_rho = nn.sigmoid(nn.Dense(features=self.n_output)(rho_first))
-        px_tau = nn.sigmoid(nn.Dense(features=self.n_output)(rho_first))
+        px_rho = nn.sigmoid(Dense(features=self.n_output)(rho_first))
+        px_tau = nn.sigmoid(Dense(features=self.n_output)(rho_first))
 
         # cells by genes by 4
         pi_first = _MLP(
@@ -161,7 +164,8 @@ class _DecoderVELOVI(nn.Module):
             layer_norm=self.layer_norm,
             training=training,
         )(z)
-        px_pi = softplus(nn.DenseGeneral(features=(self.n_output, 4))(pi_first))
+        px_pi = softplus(Dense(features=(self.n_output * 4))(pi_first))
+        px_pi = jnp.reshape(px_pi, (-1, self.n_output, 4))
 
         return px_pi, px_rho, px_tau
 
@@ -423,13 +427,27 @@ class JaxVELOVAE(JaxBaseModuleClass):
         px_pi_alpha, px_rho, px_tau = self.decoder(
             decoder_input, training=self.training
         )
-        # px_pi = Gamma(px_pi_alpha, 10, validate_args=False).rsample(
-        #     self.make_rng(_LATENT_RNG_KEY)
+        # px_pi_alpha = jnp.clip(px_pi_alpha, 0, 5)
+        px_pi = DirichletNP(px_pi_alpha).rsample(self.make_rng(_LATENT_RNG_KEY))
+        # px_pi_unnormalized = jnp.square(
+        #     Normal(2 * px_pi_alpha, jnp.sqrt(0.5 * jnp.ones_like(px_pi_alpha))).rsample(
+        #         self.make_rng(_LATENT_RNG_KEY)
+        #     )
         # )
-        # px_pi = px_pi / jnp.sum(px_pi, axis=-1, keepdims=True)
-
+        # px_pi = dirichlet_sample(self.make_rng(_LATENT_RNG_KEY), px_pi_alpha)
+        # px_pi = jnp.nan_to_num(
+        #     px_pi,
+        #     nan=jnp.finfo(px_pi).tiny,
+        #     posinf=1 - jnp.finfo(px_pi).eps,
+        #     neginf=jnp.finfo(px_pi).tiny,
+        # )
+        # px_pi = px_pi_unnormalized / jnp.sum(px_pi_unnormalized, axis=-1, keepdims=True)
+        # px_pi = jnp.clip(
+        #     px_pi, a_min=jnp.finfo(px_pi).tiny, a_max=1 - jnp.finfo(px_pi).eps
+        # )
+        # px_pi = DirichletNP(px_pi_alpha).rsample(self.make_rng(_LATENT_RNG_KEY))
         # For now just do MAP estimation for pi
-        px_pi = px_pi_alpha / jnp.sum(px_pi_alpha, axis=-1, keepdims=True)
+        # px_pi = px_pi_alpha / jnp.sum(px_pi_alpha, axis=-1, keepdims=True)
 
         scale_unconstr = self.scale_unconstr
         scale = softplus(scale_unconstr)
@@ -484,11 +502,10 @@ class JaxVELOVAE(JaxBaseModuleClass):
         reconst_loss = reconst_loss_u.sum(axis=-1) + reconst_loss_s.sum(axis=-1)
 
         kl_pi = kl(
-            Dirichlet(px_pi_alpha, validate_args=False),
-            Dirichlet(
+            DirichletNP(px_pi_alpha),
+            DirichletNP(
                 self.dirichlet_concentration
                 * jnp.ones((px_pi.shape[-2], px_pi.shape[-1])),
-                validate_args=False,
             ),
         ).sum(axis=-1)
         # kl_pi = (
