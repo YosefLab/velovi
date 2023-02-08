@@ -10,3 +10,7 @@ API
    VELOVI
    VELOVAE
 
+.. autosummary::
+   :toctree: reference/
+
+   get_permutation_scores
