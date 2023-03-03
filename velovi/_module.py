@@ -1,11 +1,10 @@
 # -*- coding: utf-8 -*-
 """Main module."""
-from typing import Callable, Iterable, Optional
+from typing import Callable, Iterable, Literal, Optional
 
 import numpy as np
 import torch
 import torch.nn.functional as F
-from typing import Literal
 from scvi.module.base import BaseModuleClass, LossOutput, auto_move_data
 from scvi.nn import Encoder, FCLayers
 from torch import nn as nn

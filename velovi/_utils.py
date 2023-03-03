@@ -4,7 +4,6 @@ from urllib.request import urlretrieve
 
 import numpy as np
 import pandas as pd
-
 import scvelo as scv
 from anndata import AnnData
 from sklearn.preprocessing import MinMaxScaler
@@ -12,12 +11,12 @@ from sklearn.preprocessing import MinMaxScaler
 
 def get_permutation_scores(save_path: Union[str, Path] = Path("data/")) -> pd.DataFrame:
     """Get the reference permutation scores on positive and negative controls.
-    
+
     Parameters
     ----------
     save_path
         path to save the csv file
-    
+
     """
     if isinstance(save_path, str):
         save_path = Path(save_path)
