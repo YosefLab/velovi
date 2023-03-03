@@ -51,7 +51,6 @@ extensions = [
     "sphinx.ext.autosummary",
     "sphinx.ext.napoleon",
     "sphinxcontrib.bibtex",
-    "sphinx_autodoc_typehints",
     "sphinx.ext.mathjax",
     "sphinx.ext.extlinks",
     *[p.stem for p in (HERE / "extensions").glob("*.py")],
@@ -61,6 +60,7 @@ extensions = [
 autosummary_generate = True
 autodoc_member_order = "bysource"
 default_role = "literal"
+autodoc_typehints = "description"
 bibtex_reference_style = "author_year"
 napoleon_google_docstring = True
 napoleon_numpy_docstring = True
@@ -79,7 +79,6 @@ myst_url_schemes = ("http", "https", "mailto")
 nb_output_stderr = "remove"
 nb_execution_mode = "off"
 nb_merge_streams = True
-typehints_defaults = "braces"
 
 source_suffix = {
     ".rst": "restructuredtext",
