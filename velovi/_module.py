@@ -5,8 +5,8 @@ from typing import Callable, Iterable, Optional
 import numpy as np
 import torch
 import torch.nn.functional as F
-from scvi._compat import Literal
-from scvi.module.base import BaseModuleClass, LossRecorder, auto_move_data
+from typing import Literal
+from scvi.module.base import BaseModuleClass, LossOutput, auto_move_data
 from scvi.nn import Encoder, FCLayers
 from torch import nn as nn
 from torch.distributions import Categorical, Dirichlet, MixtureSameFamily, Normal
@@ -482,16 +482,10 @@ class VELOVAE(BaseModuleClass):
 
         local_loss = torch.mean(reconst_loss + weighted_kl_local)
 
-        # combine local and global
-        global_loss = 0
-        loss = (
-            local_loss
-            + self.penalty_scale * (1 - kl_weight) * end_penalty
-            + (1 / n_obs) * kl_weight * (global_loss)
-        )
+        loss = local_loss + self.penalty_scale * (1 - kl_weight) * end_penalty
 
-        loss_recoder = LossRecorder(
-            loss, reconst_loss, kl_local, torch.tensor(global_loss)
+        loss_recoder = LossOutput(
+            loss=loss, reconstruction_loss=reconst_loss, kl_local=kl_local
         )
 
         return loss_recoder

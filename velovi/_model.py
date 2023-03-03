@@ -10,7 +10,7 @@ import torch.nn.functional as F
 from anndata import AnnData
 from joblib import Parallel, delayed
 from scipy.stats import ttest_ind
-from scvi._compat import Literal
+from typing import Literal
 from scvi._utils import _doc_params
 from scvi.data import AnnDataManager
 from scvi.data.fields import LayerField
@@ -1007,8 +1007,9 @@ class VELOVI(VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
                     alpha_1,
                     lambda_alpha,
                 )
-                reconst_loss_s = -mixture_dist_s.log_prob(spliced)
-                reconst_loss_u = -mixture_dist_u.log_prob(unspliced)
+                device = gamma.device
+                reconst_loss_s = -mixture_dist_s.log_prob(spliced.to(device))
+                reconst_loss_u = -mixture_dist_u.log_prob(unspliced.to(device))
                 output = -(reconst_loss_s + reconst_loss_u)
                 output = output[..., gene_mask]
                 output = output.cpu().numpy()
