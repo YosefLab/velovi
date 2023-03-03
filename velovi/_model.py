@@ -169,9 +169,7 @@ class VELOVI(VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
         **trainer_kwargs
             Other keyword args for :class:`~scvi.train.Trainer`.
         """
-        user_plan_kwargs = (
-            plan_kwargs.copy() if isinstance(plan_kwargs, dict) else {}
-        )
+        user_plan_kwargs = plan_kwargs.copy() if isinstance(plan_kwargs, dict) else {}
         plan_kwargs = {"lr": lr, "weight_decay": weight_decay, "optimizer": "AdamW"}
         plan_kwargs.update(user_plan_kwargs)
 
