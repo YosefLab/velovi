@@ -5,7 +5,6 @@ from velovi import VELOVI
 
 
 def test_preprocess_data():
-
     adata = synthetic_iid()
     adata.layers["spliced"] = adata.X.copy()
     adata.layers["unspliced"] = adata.X.copy()
