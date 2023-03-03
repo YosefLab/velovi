@@ -11,7 +11,7 @@ from joblib import Parallel, delayed
 from scipy.stats import ttest_ind
 from scvi.data import AnnDataManager
 from scvi.data.fields import LayerField
-from scvi.dataloaders import AnnDataLoader, DataSplitter
+from scvi.dataloaders import DataSplitter
 from scvi.model.base import BaseModelClass, UnsupervisedTrainingMixin, VAEMixin
 from scvi.train import TrainingPlan, TrainRunner
 from scvi.utils._docstrings import setup_anndata_dsp
@@ -195,7 +195,7 @@ class VELOVI(VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
         )
         return runner()
 
-    @torch.no_grad()
+    @torch.inference_mode()
     def get_state_assignment(
         self,
         adata: Optional[AnnData] = None,
@@ -295,7 +295,7 @@ class VELOVI(VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
 
         return states, state_cats
 
-    @torch.no_grad()
+    @torch.inference_mode()
     def get_latent_time(
         self,
         adata: Optional[AnnData] = None,
@@ -431,7 +431,7 @@ class VELOVI(VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
         else:
             return times
 
-    @torch.no_grad()
+    @torch.inference_mode()
     def get_velocity(
         self,
         adata: Optional[AnnData] = None,
@@ -617,137 +617,7 @@ class VELOVI(VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
         else:
             return velos
 
-    @torch.no_grad()
-    def get_velocity_from_latent(
-        self,
-        latent_representation: np.ndarray,
-        return_numpy: Optional[bool] = None,
-        velo_statistic: str = "mean",
-        velo_mode: Literal["spliced", "unspliced"] = "spliced",
-        clip: bool = True,
-    ) -> Union[np.ndarray, pd.DataFrame]:
-        r"""Returns the normalized (decoded) gene expression.
-
-        This is denoted as :math:`\rho_n` in the scVI paper.
-
-        Parameters
-        ----------
-        adata
-            AnnData object with equivalent structure to initial AnnData. If `None`, defaults to the
-            AnnData object used to initialize the model.
-        return_numpy
-            Return a :class:`~numpy.ndarray` instead of a :class:`~pandas.DataFrame`. DataFrame includes
-            gene names as columns. If either `n_samples=1` or `return_mean=True`, defaults to `False`.
-            Otherwise, it defaults to `True`.
-        clip
-            Clip to minus spliced value
-
-        Returns
-        -------
-        If `n_samples` > 1 and `return_mean` is False, then the shape is `(samples, cells, genes)`.
-        Otherwise, shape is `(cells, genes)`. In this case, return type is :class:`~pandas.DataFrame` unless `return_numpy` is True.
-        """
-        adata = AnnData(latent_representation)
-        data_key = "Z"
-        manager = AnnDataManager(
-            [LayerField(data_key, layer=None, is_count_data=False)]
-        )
-        manager.register_fields(adata)
-        scdl = AnnDataLoader(manager)
-
-        gamma, beta, alpha, alpha_1, lambda_alpha = self.module._get_rates()
-
-        velos = []
-        for tensors in scdl:
-            z = tensors[data_key]
-            generative_outputs = self.module.generative(
-                z=z,
-                gamma=gamma,
-                beta=beta,
-                alpha=alpha,
-                alpha_1=alpha_1,
-                lambda_alpha=lambda_alpha,
-            )
-            pi = generative_outputs["px_pi"]
-            tau = generative_outputs["px_tau"]
-            rho = generative_outputs["px_rho"]
-
-            ind_prob = pi[..., 0]
-            steady_prob = pi[..., 1]
-            rep_prob = pi[..., 2]
-            switch_time = F.softplus(self.module.switch_time_unconstr)
-
-            ind_time = switch_time * rho
-            u_0, s_0 = self.module._get_induction_unspliced_spliced(
-                alpha, alpha_1, lambda_alpha, beta, gamma, switch_time
-            )
-            rep_time = (self.module.t_max - switch_time) * tau
-            mean_u_rep, mean_s_rep = self.module._get_repression_unspliced_spliced(
-                u_0,
-                s_0,
-                beta,
-                gamma,
-                rep_time,
-            )
-            if velo_mode == "spliced":
-                velo_rep = beta * mean_u_rep - gamma * mean_s_rep
-            else:
-                velo_rep = -beta * mean_u_rep
-            mean_u_ind, mean_s_ind = self.module._get_induction_unspliced_spliced(
-                alpha, alpha_1, lambda_alpha, beta, gamma, ind_time
-            )
-            if velo_mode == "spliced":
-                velo_ind = beta * mean_u_ind - gamma * mean_s_ind
-            else:
-                transcription_rate = alpha_1 - (alpha_1 - alpha) * torch.exp(
-                    -lambda_alpha * ind_time
-                )
-                velo_ind = transcription_rate - beta * mean_u_ind
-
-            if velo_mode == "spliced":
-                # velo_steady = beta * u_0 - gamma * s_0
-                velo_steady = torch.zeros_like(velo_ind)
-            else:
-                # velo_steady = alpha - beta * u_0
-                velo_steady = torch.zeros_like(velo_ind)
-
-            # expectation
-            if velo_statistic == "mean":
-                output = (
-                    ind_prob * velo_ind
-                    + rep_prob * velo_rep
-                    + steady_prob * velo_steady
-                )
-            # maximum
-            else:
-                v = torch.stack(
-                    [
-                        velo_ind,
-                        velo_steady.expand(velo_ind.shape),
-                        velo_rep,
-                        torch.zeros_like(velo_rep),
-                    ],
-                    dim=2,
-                )
-                max_prob = torch.amax(pi, dim=-1)
-                max_prob = torch.stack([max_prob] * 4, dim=2)
-                max_prob_mask = pi.ge(max_prob)
-                output = (v * max_prob_mask).sum(dim=-1)
-
-            # samples by cells by genes
-            velos.append(output.cpu().numpy())
-
-        velos = np.concatenate(velos, axis=0)
-
-        if return_numpy is None or return_numpy is False:
-            return pd.DataFrame(
-                velos,
-                columns=self.adata.var_names,
-            )
-        else:
-            return velos
-
-    @torch.no_grad()
+    @torch.inference_mode()
     def get_expression_fit(
         self,
         adata: Optional[AnnData] = None,
@@ -891,7 +761,7 @@ class VELOVI(VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
         else:
             return fits_s, fits_u
 
-    @torch.no_grad()
+    @torch.inference_mode()
     def get_gene_likelihood(
         self,
         adata: Optional[AnnData] = None,
@@ -1014,8 +884,8 @@ class VELOVI(VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
         rls = np.concatenate(rls, axis=0)
         return rls
 
-    @torch.no_grad()
-    def get_rates(self, mean: bool = True):
+    @torch.inference_mode()
+    def get_rates(self):
         gamma, beta, alpha, alpha_1, lambda_alpha = self.module._get_rates()
 
         return {
@@ -1059,77 +929,6 @@ class VELOVI(VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
         )
         adata_manager.register_fields(adata, **kwargs)
         cls.register_manager(adata_manager)
-
-    def get_loadings(self) -> pd.DataFrame:
-        """Extract per-gene weights in the linear decoder.
-
-        Shape is genes by `n_latent`.
-        """
-        cols = [f"Z_{i}" for i in range(self.n_latent)]
-        var_names = self.adata.var_names
-        loadings = pd.DataFrame(
-            self.module.get_loadings(), index=var_names, columns=cols
-        )
-
-        return loadings
-
-    def get_variance_explained(
-        self,
-        adata: Optional[AnnData] = None,
-        labels_key: Optional[str] = None,
-        n_samples: int = 10,
-    ) -> pd.DataFrame:
-        if self.module.decoder.linear_decoder is False:
-            raise ValueError("Model not trained with linear decoder")
-        adata = self._validate_anndata(adata)
-        adata_manager = self.get_anndata_manager(adata)
-        n_latent = self.module.n_latent
-
-        if labels_key is not None:
-            groups = np.unique(adata.obs[labels_key])
-        else:
-            groups = [None]
-
-        spliced = adata_manager.get_from_registry(REGISTRY_KEYS.X_KEY)
-        unspliced = adata_manager.get_from_registry(REGISTRY_KEYS.U_KEY)
-
-        centered_s = spliced - spliced.mean(0)
-        centered_u = unspliced - unspliced.mean(0)
-
-        def r_squared(true_s, pred_s, true_u, pred_u, centered_s, centered_u):
-            rss_s = np.sum((true_s - pred_s) ** 2)
-            tss_s = np.sum(centered_s**2)
-            rss_u = np.sum((true_u - pred_u) ** 2)
-            tss_u = np.sum(centered_u**2)
-
-            return (1 - (rss_s + rss_u) / (tss_s + tss_u)) * 100
-
-        df_out = pd.DataFrame(
-            data=np.zeros((n_latent, len(groups))),
-            index=[f"Z_{i}" for i in range(n_latent)],
-            columns=groups if groups[0] is not None else ["0"],
-        )
-
-        for i in range(n_latent):
-            fitted_s, fitted_u = self.get_expression_fit(
-                adata, restrict_to_latent_dim=i, n_samples=n_samples, return_numpy=True
-            )
-            for j, g in enumerate(groups):
-                if g is None:
-                    subset = slice(None)
-                else:
-                    subset = adata.obs[labels_key] == g
-                r_2 = r_squared(
-                    spliced[subset],
-                    fitted_s[subset],
-                    unspliced[subset],
-                    fitted_u[subset],
-                    centered_s[subset],
-                    centered_u[subset],
-                )
-                df_out.iloc[i, j] = r_2
-
-        return df_out
 
     def get_directional_uncertainty(
         self,
