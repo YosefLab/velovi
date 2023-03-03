@@ -34,15 +34,15 @@ codecov = {version = ">=2.0.8", optional = true}
 ruff = {version = "*", optional = true}
 importlib-metadata = {version = "^1.0", python = "<3.8"}
 ipython = {version = ">=7.1.1", optional = true}
-isort = {version = ">=5.7", optional = true}
 jupyter = {version = ">=1.0", optional = true}
-nbconvert = {version = ">=5.4.0", optional = true}
-nbformat = {version = ">=4.4.0", optional = true}
-nbsphinx = {version = "*", optional = true}
-nbsphinx-link = {version = "*", optional = true}
 pre-commit = {version = ">=2.7.1", optional = true}
 sphinx-book-theme = {version = ">=1.0.0", optional = true}
+myst-nb = {version = "*", optional = true}
+sphinx-copybutton = {version = "*", optional = true}
+sphinxcontrib-bibtex = {version = "*", optional = true}
+ipykernel = {version = "*", optional = true}
 pytest = {version = ">=4.4", optional = true}
+pytest-cov = {version = "*", optional = true}
 python = ">=3.8,<4.0"
 python-igraph = {version = "*", optional = true}
 scanpy = {version = ">=1.6", optional = true}
@@ -52,10 +52,9 @@ scvi-tools = ">=0.20.1"
 scikit-learn = ">=0.21.2"
 sphinx = {version = ">=4.1", optional = true}
 sphinx-autodoc-typehints = {version = "*", optional = true}
-sphinx-rtd-theme = {version = "*", optional = true}
 
 [tool.poetry.extras]
-dev = ["black", "pytest", "ruff", "codecov", "scanpy", "loompy", "jupyter", "nbformat", "nbconvert", "pre-commit", "isort"]
+dev = ["black", "pytest", "pytest-cov", "ruff", "codecov", "scanpy", "loompy", "jupyter", "pre-commit"]
 docs = [
   "sphinx",
   "scanpydoc",
