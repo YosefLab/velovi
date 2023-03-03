@@ -34,8 +34,7 @@ def _softplus_inverse(x: np.ndarray) -> np.ndarray:
 
 
 class VELOVI(VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
-    """
-    Velocity Variational Inference
+    """Velocity Variational Inference.
 
     Parameters
     ----------
@@ -138,8 +137,7 @@ class VELOVI(VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
         plan_kwargs: Optional[dict] = None,
         **trainer_kwargs,
     ):
-        """
-        Train the model.
+        """Train the model.
 
         Parameters
         ----------
@@ -171,14 +169,12 @@ class VELOVI(VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
         **trainer_kwargs
             Other keyword args for :class:`~scvi.train.Trainer`.
         """
-        user_plan_kwargs = (
-            plan_kwargs.copy() if isinstance(plan_kwargs, dict) else dict()
-        )
-        plan_kwargs = dict(lr=lr, weight_decay=weight_decay, optimizer="AdamW")
+        user_plan_kwargs = plan_kwargs.copy() if isinstance(plan_kwargs, dict) else {}
+        plan_kwargs = {"lr": lr, "weight_decay": weight_decay, "optimizer": "AdamW"}
         plan_kwargs.update(user_plan_kwargs)
 
         user_train_kwargs = trainer_kwargs.copy()
-        trainer_kwargs = dict(gradient_clip_val=gradient_clip_val)
+        trainer_kwargs = {"gradient_clip_val": gradient_clip_val}
         trainer_kwargs.update(user_train_kwargs)
 
         data_splitter = DataSplitter(
@@ -216,8 +212,7 @@ class VELOVI(VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
         return_mean: bool = True,
         return_numpy: Optional[bool] = None,
     ) -> Tuple[Union[np.ndarray, pd.DataFrame], List[str]]:
-        """
-        Returns cells by genes by states probabilities.
+        """Returns cells by genes by states probabilities.
 
         Parameters
         ----------
@@ -318,8 +313,7 @@ class VELOVI(VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
         return_mean: bool = True,
         return_numpy: Optional[bool] = None,
     ) -> Union[np.ndarray, pd.DataFrame]:
-        """
-        Returns the cells by genes latent time.
+        """Returns the cells by genes latent time.
 
         Parameters
         ----------
@@ -457,8 +451,7 @@ class VELOVI(VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
         velo_mode: Literal["spliced", "unspliced"] = "spliced",
         clip: bool = True,
     ) -> Union[np.ndarray, pd.DataFrame]:
-        """
-        Returns cells by genes velocity estimates.
+        """Returns cells by genes velocity estimates.
 
         Parameters
         ----------
@@ -638,8 +631,7 @@ class VELOVI(VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
         velo_mode: Literal["spliced", "unspliced"] = "spliced",
         clip: bool = True,
     ) -> Union[np.ndarray, pd.DataFrame]:
-        r"""
-        Returns the normalized (decoded) gene expression.
+        r"""Returns the normalized (decoded) gene expression.
 
         This is denoted as :math:`\rho_n` in the scVI paper.
 
@@ -772,8 +764,7 @@ class VELOVI(VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
         return_numpy: Optional[bool] = None,
         restrict_to_latent_dim: Optional[int] = None,
     ) -> Union[np.ndarray, pd.DataFrame]:
-        r"""
-        Returns the fitted spliced and unspliced abundance (s(t) and u(t)).
+        r"""Returns the fitted spliced and unspliced abundance (s(t) and u(t)).
 
         Parameters
         ----------
@@ -832,7 +823,7 @@ class VELOVI(VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
                 inference_outputs, generative_outputs = self.module.forward(
                     tensors=tensors,
                     compute_loss=False,
-                    generative_kwargs=dict(latent_dim=restrict_to_latent_dim),
+                    generative_kwargs={"latent_dim": restrict_to_latent_dim},
                 )
 
                 gamma = inference_outputs["gamma"]
@@ -845,7 +836,11 @@ class VELOVI(VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
                 px_rho = generative_outputs["px_rho"]
                 px_tau = generative_outputs["px_tau"]
 
-                (mixture_dist_s, mixture_dist_u, _,) = self.module.get_px(
+                (
+                    mixture_dist_s,
+                    mixture_dist_u,
+                    _,
+                ) = self.module.get_px(
                     px_pi,
                     px_rho,
                     px_tau,
@@ -912,8 +907,7 @@ class VELOVI(VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
         return_mean: bool = True,
         return_numpy: Optional[bool] = None,
     ) -> Union[np.ndarray, pd.DataFrame]:
-        r"""
-        Returns the likelihood per gene. Higher is better.
+        r"""Returns the likelihood per gene. Higher is better.
 
         This is denoted as :math:`\rho_n` in the scVI paper.
 
@@ -995,7 +989,11 @@ class VELOVI(VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
                 px_rho = generative_outputs["px_rho"]
                 px_tau = generative_outputs["px_tau"]
 
-                (mixture_dist_s, mixture_dist_u, _,) = self.module.get_px(
+                (
+                    mixture_dist_s,
+                    mixture_dist_u,
+                    _,
+                ) = self.module.get_px(
                     px_pi,
                     px_rho,
                     px_tau,
@@ -1023,7 +1021,6 @@ class VELOVI(VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
 
     @torch.no_grad()
     def get_rates(self, mean: bool = True):
-
         gamma, beta, alpha, alpha_1, lambda_alpha = self.module._get_rates()
 
         return {
@@ -1043,15 +1040,15 @@ class VELOVI(VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
         unspliced_layer: str,
         **kwargs,
     ) -> Optional[AnnData]:
-        """
-        %(summary)s.
+        """%(summary)s.
+
         Parameters
         ----------
         %(param_adata)s
         spliced_layer
             Layer in adata with spliced normalized expression
         unspliced_layer
-            Layer in adata with unspliced normalized expression
+            Layer in adata with unspliced normalized expression.
 
         Returns
         -------
@@ -1091,8 +1088,7 @@ class VELOVI(VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
         silent: bool = False,
         **kwargs,
     ) -> pd.DataFrame:
-        r"""
-        A unified method for differential velocity analysis.
+        r"""A unified method for differential velocity analysis.
 
         Implements `"vanilla"` DE [Lopez18]_ and `"change"` mode DE [Boyeau19]_.
 
@@ -1204,12 +1200,11 @@ class VELOVI(VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
         return correlation12, correlation21
 
     def get_loadings(self) -> pd.DataFrame:
-        """
-        Extract per-gene weights in the linear decoder.
+        """Extract per-gene weights in the linear decoder.
 
         Shape is genes by `n_latent`.
         """
-        cols = ["Z_{}".format(i) for i in range(self.n_latent)]
+        cols = [f"Z_{i}" for i in range(self.n_latent)]
         var_names = self.adata.var_names
         loadings = pd.DataFrame(
             self.module.get_loadings(), index=var_names, columns=cols
@@ -1223,7 +1218,6 @@ class VELOVI(VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
         labels_key: Optional[str] = None,
         n_samples: int = 10,
     ) -> pd.DataFrame:
-
         if self.module.decoder.linear_decoder is False:
             raise ValueError("Model not trained with linear decoder")
         adata = self._validate_anndata(adata)
@@ -1283,7 +1277,6 @@ class VELOVI(VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
         gene_list: Iterable[str] = None,
         n_jobs: int = -1,
     ):
-
         adata = self._validate_anndata(adata)
 
         logger.info("Sampling from model...")
@@ -1301,8 +1294,7 @@ class VELOVI(VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
     def get_permutation_scores(
         self, labels_key: str, adata: Optional[AnnData] = None
     ) -> Tuple[pd.DataFrame, AnnData]:
-        """
-        Compute permutation scores.
+        """Compute permutation scores.
 
         Parameters
         ----------
@@ -1433,8 +1425,7 @@ def _compute_directional_statistics_tensor(
 def _directional_statistics_per_cell(
     tensor: np.ndarray,
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    """
-    Internal function for parallelization.
+    """Internal function for parallelization.
 
     Parameters
     ----------

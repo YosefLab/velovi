@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Main module."""
 from typing import Callable, Iterable, Literal, Optional
 
@@ -17,8 +16,7 @@ torch.backends.cudnn.benchmark = True
 
 
 class DecoderVELOVI(nn.Module):
-    """
-    Decodes data from latent space of ``n_input`` dimensions ``n_output``dimensions.
+    """Decodes data from latent space of ``n_input`` dimensions ``n_output``dimensions.
 
     Uses a fully-connected neural network of ``n_hidden`` layers.
 
@@ -107,8 +105,7 @@ class DecoderVELOVI(nn.Module):
         self.linear_scaling_tau_intercept = nn.Parameter(torch.zeros(n_output))
 
     def forward(self, z: torch.Tensor, latent_dim: int = None):
-        """
-        The forward computation for a single sample.
+        """The forward computation for a single sample.
 
          #. Decodes the data from the latent space using the decoder network
          #. Returns parameters for the ZINB distribution of expression
@@ -156,8 +153,7 @@ class DecoderVELOVI(nn.Module):
 
 # VAE model
 class VELOVAE(BaseModuleClass):
-    """
-    Variational auto-encoder model.
+    """Variational auto-encoder model.
 
     This is an implementation of the scVI model descibed in [Lopez18]_
 
@@ -325,10 +321,10 @@ class VELOVAE(BaseModuleClass):
         spliced = tensors[REGISTRY_KEYS.X_KEY]
         unspliced = tensors[REGISTRY_KEYS.U_KEY]
 
-        input_dict = dict(
-            spliced=spliced,
-            unspliced=unspliced,
-        )
+        input_dict = {
+            "spliced": spliced,
+            "unspliced": unspliced,
+        }
         return input_dict
 
     def _get_generative_input(self, tensors, inference_outputs):
@@ -356,8 +352,7 @@ class VELOVAE(BaseModuleClass):
         unspliced,
         n_samples=1,
     ):
-        """
-        High level inference method.
+        """High level inference method.
 
         Runs the inference (encoder) model.
         """
@@ -380,16 +375,16 @@ class VELOVAE(BaseModuleClass):
 
         gamma, beta, alpha, alpha_1, lambda_alpha = self._get_rates()
 
-        outputs = dict(
-            z=z,
-            qz_m=qz_m,
-            qz_v=qz_v,
-            gamma=gamma,
-            beta=beta,
-            alpha=alpha,
-            alpha_1=alpha_1,
-            lambda_alpha=lambda_alpha,
-        )
+        outputs = {
+            "z": z,
+            "qz_m": qz_m,
+            "qz_v": qz_v,
+            "gamma": gamma,
+            "beta": beta,
+            "alpha": alpha,
+            "alpha_1": alpha_1,
+            "lambda_alpha": lambda_alpha,
+        }
         return outputs
 
     def _get_rates(self):
@@ -431,16 +426,16 @@ class VELOVAE(BaseModuleClass):
             lambda_alpha,
         )
 
-        return dict(
-            px_pi=px_pi,
-            px_rho=px_rho,
-            px_tau=px_tau,
-            scale=scale,
-            px_pi_alpha=px_pi_alpha,
-            mixture_dist_u=mixture_dist_u,
-            mixture_dist_s=mixture_dist_s,
-            end_penalty=end_penalty,
-        )
+        return {
+            "px_pi": px_pi,
+            "px_rho": px_rho,
+            "px_tau": px_tau,
+            "scale": scale,
+            "px_pi_alpha": px_pi_alpha,
+            "mixture_dist_u": mixture_dist_u,
+            "mixture_dist_s": mixture_dist_s,
+            "end_penalty": end_penalty,
+        }
 
     def loss(
         self,
@@ -502,7 +497,6 @@ class VELOVAE(BaseModuleClass):
         alpha_1,
         lambda_alpha,
     ) -> torch.Tensor:
-
         t_s = torch.clamp(F.softplus(self.switch_time_unconstr), 0, self.t_max)
 
         n_cells = px_pi.shape[0]

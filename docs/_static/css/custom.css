@@ -1,6 +1,6 @@
 /* influenced by and borrowed from: https://github.com/cvxgrp/pymde/blob/main/docs_src/source/_static/css/custom.css */
 
-@import url('https://fonts.googleapis.com/css2?family=Roboto:ital,wght@0,300;0,400;0,600;1,300;1,400;1,600&display=swap');
+@import url("https://fonts.googleapis.com/css2?family=Roboto:ital,wght@0,300;0,400;0,600;1,300;1,400;1,600&display=swap");
 
 :root {
     --sidebarcolor: #003262;
@@ -8,7 +8,7 @@
     --sidebarhover: #295e97;
 
     --bodyfontcolor: #333;
-    --webfont: 'Roboto';
+    --webfont: "Roboto";
 
     --contentwidth: 1000px;
 }
@@ -20,7 +20,7 @@ h3,
 h4,
 h5,
 h6 {
-    font-family: var(--webfont), 'Helvetica Neue', Helvetica, Arial, sans-serif;
+    font-family: var(--webfont), "Helvetica Neue", Helvetica, Arial, sans-serif;
     font-weight: 400;
 }
 
@@ -38,7 +38,7 @@ h1 {
 }
 
 body {
-    font-family: var(--webfont), 'Helvetica Neue', Helvetica, Arial, sans-serif;
+    font-family: var(--webfont), "Helvetica Neue", Helvetica, Arial, sans-serif;
     color: var(--bodyfontcolor);
 }
 
@@ -46,7 +46,6 @@ p {
     font-size: 1em;
     line-height: 150%;
 }
-
 
 /* Sidebar */
 .wy-side-nav-search {
@@ -66,7 +65,7 @@ p {
     color: var(--sidebarfontcolor);
 }
 
-.wy-side-nav-search>div.version {
+.wy-side-nav-search > div.version {
     color: var(--sidebarfontcolor);
 }
 
@@ -79,8 +78,13 @@ p {
     max-width: var(--contentwidth);
 }
 
-
-html.writer-html5 .rst-content dl[class]:not(.option-list):not(.field-list):not(.footnote):not(.glossary):not(.simple) dl:not(.field-list)>dt {
+html.writer-html5
+    .rst-content
+    dl[class]:not(.option-list):not(.field-list):not(.footnote):not(
+        .glossary
+    ):not(.simple)
+    dl:not(.field-list)
+    > dt {
     margin-bottom: 6px;
     border-left: none;
     background: none;
@@ -110,10 +114,10 @@ div.nbinput.container {
 
 div.nbinput.container div.input_area {
     /* Code cell border that works in both dark and light mode */
-    border-color: rgba(127, 127, 127, .25) !important;
+    border-color: rgba(127, 127, 127, 0.25) !important;
 }
 
-div.nbinput.container div.input_area div[class*="highlight"]>pre {
+div.nbinput.container div.input_area div[class*="highlight"] > pre {
     padding: 10px !important;
     margin: 0;
 }
