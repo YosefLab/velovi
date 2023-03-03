@@ -1,6 +1,5 @@
 import logging
 import warnings
-from functools import partial
 from typing import Iterable, List, Literal, Optional, Sequence, Tuple, Union
 
 import numpy as np
@@ -10,16 +9,12 @@ import torch.nn.functional as F
 from anndata import AnnData
 from joblib import Parallel, delayed
 from scipy.stats import ttest_ind
-from scvi._utils import _doc_params
 from scvi.data import AnnDataManager
 from scvi.data.fields import LayerField
 from scvi.dataloaders import AnnDataLoader, DataSplitter
-from scvi.model._utils import scrna_raw_counts_properties
 from scvi.model.base import BaseModelClass, UnsupervisedTrainingMixin, VAEMixin
-from scvi.model.base._utils import _de_core
 from scvi.train import TrainingPlan, TrainRunner
-from scvi.utils._docstrings import doc_differential_expression, setup_anndata_dsp
-from sklearn.metrics.pairwise import cosine_similarity
+from scvi.utils._docstrings import setup_anndata_dsp
 
 from ._constants import REGISTRY_KEYS
 from ._module import VELOVAE
@@ -1064,140 +1059,6 @@ class VELOVI(VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
         )
         adata_manager.register_fields(adata, **kwargs)
         cls.register_manager(adata_manager)
-
-    @torch.no_grad()
-    @_doc_params(
-        doc_differential_expression=doc_differential_expression,
-    )
-    def differential_velocity(
-        self,
-        adata: Optional[AnnData] = None,
-        groupby: Optional[str] = None,
-        group1: Optional[Iterable[str]] = None,
-        group2: Optional[str] = None,
-        idx1: Optional[Union[Sequence[int], Sequence[bool], str]] = None,
-        idx2: Optional[Union[Sequence[int], Sequence[bool], str]] = None,
-        mode: Literal["vanilla", "change"] = "vanilla",
-        delta: float = 0.25,
-        batch_size: Optional[int] = None,
-        all_stats: bool = True,
-        batch_correction: bool = False,
-        batchid1: Optional[Iterable[str]] = None,
-        batchid2: Optional[Iterable[str]] = None,
-        fdr_target: float = 0.05,
-        silent: bool = False,
-        **kwargs,
-    ) -> pd.DataFrame:
-        r"""A unified method for differential velocity analysis.
-
-        Implements `"vanilla"` DE [Lopez18]_ and `"change"` mode DE [Boyeau19]_.
-
-        Parameters
-        ----------
-        {doc_differential_expression}
-        **kwargs
-            Keyword args for :meth:`scvi.model.base.DifferentialComputation.get_bayes_factors`
-
-        Returns
-        -------
-        Differential expression DataFrame.
-        """
-        adata = self._validate_anndata(adata)
-
-        def model_fn(adata, **kwargs):
-            if "transform_batch" in kwargs.keys():
-                kwargs.pop("transform_batch")
-            return partial(
-                self.get_velocity,
-                batch_size=batch_size,
-                n_samples=1,
-                return_numpy=True,
-                clip=False,
-            )(adata, **kwargs)
-
-        col_names = adata.var_names
-
-        result = _de_core(
-            self.get_anndata_manager(adata, required=True),
-            model_fn,
-            groupby,
-            group1,
-            group2,
-            idx1,
-            idx2,
-            all_stats,
-            scrna_raw_counts_properties,
-            col_names,
-            mode,
-            batchid1,
-            batchid2,
-            delta,
-            batch_correction,
-            fdr_target,
-            silent,
-            **kwargs,
-        )
-
-        return result
-
-    @torch.no_grad()
-    def differential_transition(
-        self,
-        groupby: str,
-        group1: str,
-        group2: str,
-        adata: Optional[AnnData] = None,
-        batch_size: Optional[int] = None,
-        n_samples: Optional[int] = 5000,
-    ) -> pd.DataFrame:
-        adata = self._validate_anndata(adata)
-        adata_manager = self.get_anndata_manager(adata, required=True)
-
-        if not isinstance(group1, str):
-            raise ValueError("Group 1 must be a string")
-
-        cell_idx1 = (adata.obs[groupby] == group1).to_numpy().ravel()
-        if group2 is None:
-            cell_idx2 = ~cell_idx1
-        else:
-            cell_idx2 = (adata.obs[groupby] == group2).to_numpy().ravel()
-
-        indices1 = np.random.choice(
-            np.asarray(np.where(cell_idx1)[0].ravel()), n_samples
-        )
-        indices2 = np.random.choice(
-            np.asarray(np.where(cell_idx2)[0].ravel()), n_samples
-        )
-
-        velo1 = self.get_velocity(
-            adata,
-            return_numpy=True,
-            indices=indices1,
-            n_samples=1,
-            batch_size=batch_size,
-        )
-        velo1 = velo1 - velo1.mean(1)[:, np.newaxis]
-        velo2 = self.get_velocity(
-            adata,
-            return_numpy=True,
-            indices=indices2,
-            n_samples=1,
-            batch_size=batch_size,
-        )
-        velo2 = velo2 - velo2.mean(1)[:, np.newaxis]
-
-        spliced = adata_manager.get_from_registry(REGISTRY_KEYS.X_KEY)
-        delta12 = spliced[indices2] - spliced[indices1]
-        delta12 = delta12 - delta12.mean(1)[:, np.newaxis]
-
-        delta21 = spliced[indices1] - spliced[indices2]
-        delta21 = delta21 - delta21.mean(1)[:, np.newaxis]
-
-        # TODO: Make more efficient
-        correlation12 = np.diagonal(cosine_similarity(velo1, delta12))
-        correlation21 = np.diagonal(cosine_similarity(velo2, delta21))
-
-        return correlation12, correlation21
 
     def get_loadings(self) -> pd.DataFrame:
         """Extract per-gene weights in the linear decoder.
