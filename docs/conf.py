@@ -106,6 +106,7 @@ intersphinx_mapping = {
     "scanpy": ("https://scanpy.readthedocs.io/en/stable/", None),
     "jax": ("https://jax.readthedocs.io/en/latest/", None),
     "plottable": ("https://plottable.readthedocs.io/en/latest/", None),
+    "scvi-tools": ("https://docs.scvi-tools.org/en/stable/", None),
 }
 
 # List of patterns, relative to source directory, that match files and
