@@ -1,10 +1,3 @@
-# Configuration file for the Sphinx documentation builder.
-#
-# This file only contains a selection of the most common options. For a full
-# list see the documentation:
-# https://www.sphinx-doc.org/en/master/usage/configuration.html
-
-# -- Path setup --------------------------------------------------------------
 from typing import Any
 import subprocess
 import os
@@ -28,6 +21,7 @@ package_name = "velovi"
 author = info["Author"]
 copyright = f"{datetime.now():%Y}, {author}."
 version = info["Version"]
+repository_url = f"https://github.com/yoseflab/{project_name}"
 
 # The full version, including alpha/beta/rc tags
 release = info["Version"]
@@ -52,7 +46,6 @@ html_context = {
 extensions = [
     "myst_nb",
     "sphinx.ext.autodoc",
-    "sphinx_copybutton",
     "sphinx.ext.linkcode",
     "sphinx.ext.intersphinx",
     "sphinx.ext.autosummary",
@@ -60,12 +53,13 @@ extensions = [
     "sphinxcontrib.bibtex",
     "sphinx_autodoc_typehints",
     "sphinx.ext.mathjax",
-    "IPython.sphinxext.ipython_console_highlighting",
+    "sphinx.ext.extlinks",
     *[p.stem for p in (HERE / "extensions").glob("*.py")],
+    "sphinx_copybutton",
 ]
 
 autosummary_generate = True
-autodoc_member_order = "groupwise"
+autodoc_member_order = "bysource"
 default_role = "literal"
 bibtex_reference_style = "author_year"
 napoleon_google_docstring = True
@@ -73,7 +67,6 @@ napoleon_numpy_docstring = True
 napoleon_include_init_with_doc = False
 napoleon_use_rtype = True  # having a separate entry generally helps readability
 napoleon_use_param = True
-myst_heading_anchors = 3  # create anchors for h1-h3
 myst_enable_extensions = [
     "amsmath",
     "colon_fence",
@@ -105,14 +98,24 @@ intersphinx_mapping = {
     "sklearn": ("https://scikit-learn.org/stable/", None),
     "scanpy": ("https://scanpy.readthedocs.io/en/stable/", None),
     "jax": ("https://jax.readthedocs.io/en/latest/", None),
+    "torch": ("https://pytorch.org/docs/master/", None),
     "plottable": ("https://plottable.readthedocs.io/en/latest/", None),
     "scvi-tools": ("https://docs.scvi-tools.org/en/stable/", None),
+    "mudata": ("https://mudata.readthedocs.io/en/latest/", None),
 }
 
 # List of patterns, relative to source directory, that match files and
 # directories to ignore when looking for source files.
 # This pattern also affects html_static_path and html_extra_path.
 exclude_patterns = ["_build", "Thumbs.db", ".DS_Store", "**.ipynb_checkpoints"]
+
+# extlinks config
+extlinks = {
+    "issue": (f"{repository_url}/issues/%s", "#%s"),
+    "pr": (f"{repository_url}/pull/%s", "#%s"),
+    "ghuser": ("https://github.com/%s", "@%s"),
+}
+
 
 # -- Linkcode settings -------------------------------------------------
 

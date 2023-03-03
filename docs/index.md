@@ -8,7 +8,6 @@ Welcome to the velovi documentation.
 :hidden: true
 :maxdepth: 1
 
-installation
 api/index
 tutorial
 release_notes/index
