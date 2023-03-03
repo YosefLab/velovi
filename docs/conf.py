@@ -17,7 +17,7 @@ from importlib.metadata import metadata
 from pathlib import Path
 
 HERE = Path(__file__).parent
-sys.path.insert(0, str(HERE / "extensions"))
+sys.path[:0] = [str(HERE.parent), str(HERE / "extensions")]
 
 
 # -- Project information -----------------------------------------------------
