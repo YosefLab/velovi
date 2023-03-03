@@ -1,7 +1,7 @@
 # API
 
 ```{eval-rst}
-.. currentmodule:: scvi
+.. currentmodule:: velovi
 ```
 
 ```{eval-rst}
