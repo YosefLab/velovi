@@ -7,7 +7,11 @@
 [link-tests]: https://github.com/yoseflab/velovi/actions/workflows/test.yml
 [badge-docs]: https://img.shields.io/readthedocs/velovi
 
-Variational inference for RNA velocity. This is an experimental repo for the veloVI model. Installation instructions and tutorials are in the docs. Over the next few months veloVI will move into [scvelo](https://scvelo.org/).
+🚧 :warning: This package is no longer being actively developed or maintained. Please use the
+[scvi-tools](https://github.com/scverse/scvi-tools) package instead. See this
+[thread](https://github.com/scverse/scvi-tools/issues/2610) for more details. :warning: 🚧
+
+Variational inference for RNA velocity. This is an experimental repo for the veloVI model. Installation instructions and tutorials are in the docs.
 
 ## Getting started
 
