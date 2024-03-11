@@ -1,11 +1,5 @@
-import pytest
 import scvelo as scv
 from scvi.data import synthetic_iid
-
-
-def test_import():
-    with pytest.warns(UserWarning):
-        pass
 
 
 def test_preprocess_data():
