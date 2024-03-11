@@ -11,7 +11,7 @@
 [scvi-tools](https://github.com/scverse/scvi-tools) package instead. See this
 [thread](https://github.com/scverse/scvi-tools/issues/2610) for more details. :warning: 🚧
 
-Variational inference for RNA velocity. This is an experimental repo for the veloVI model. Installation instructions and tutorials are in the docs. Over the next few months veloVI will move into [scvelo](https://scvelo.org/).
+Variational inference for RNA velocity. This is an experimental repo for the veloVI model. Installation instructions and tutorials are in the docs.
 
 ## Getting started
 
