@@ -1,7 +1,11 @@
+import pytest
 import scvelo as scv
 from scvi.data import synthetic_iid
 
-from velovi import VELOVI
+
+def test_import():
+    with pytest.warns(UserWarning):
+        pass
 
 
 def test_preprocess_data():
@@ -16,6 +20,8 @@ def test_preprocess_data():
 
 
 def test_velovi():
+    from velovi import VELOVI
+
     n_latent = 5
     adata = synthetic_iid()
     adata.layers["spliced"] = adata.X.copy()
