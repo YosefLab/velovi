@@ -25,7 +25,7 @@ packages = [
   {include = "velovi"},
 ]
 readme = "README.md"
-version = "0.3.0"
+version = "0.3.1"
 
 [tool.poetry.dependencies]
 anndata = ">=0.7.5"
