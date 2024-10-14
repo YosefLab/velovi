@@ -56,6 +56,7 @@ def preprocess_data(
     Returns
     -------
     Preprocessed adata.
+
     """
     if min_max_scale:
         scaler = MinMaxScaler()
