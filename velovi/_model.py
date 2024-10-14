@@ -49,6 +49,7 @@ class VELOVI(VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
         Use a linear decoder from latent space to time.
     **model_kwargs
         Keyword args for :class:`~velovi.VELOVAE`
+
     """
 
     def __init__(
@@ -108,13 +109,8 @@ class VELOVI(VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
             **model_kwargs,
         )
         self._model_summary_string = (
-            "VELOVI Model with the following params: \nn_hidden: {}, n_latent: {}, n_layers: {}, dropout_rate: "
-            "{}"
-        ).format(
-            n_hidden,
-            n_latent,
-            n_layers,
-            dropout_rate,
+            f"VELOVI Model with the following params: \nn_hidden: {n_hidden}, n_latent: {n_latent}, n_layers: {n_layers}, dropout_rate: "
+            f"{dropout_rate}"
         )
         self.init_params_ = self._get_init_params(locals())
 
@@ -164,6 +160,7 @@ class VELOVI(VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
             `train()` will overwrite values present in `plan_kwargs`, when appropriate.
         **trainer_kwargs
             Other keyword args for :class:`~scvi.train.Trainer`.
+
         """
         user_plan_kwargs = plan_kwargs.copy() if isinstance(plan_kwargs, dict) else {}
         plan_kwargs = {"lr": lr, "weight_decay": weight_decay, "optimizer": "AdamW"}
@@ -238,6 +235,7 @@ class VELOVI(VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
         -------
         If `n_samples` > 1 and `return_mean` is False, then the shape is `(samples, cells, genes)`.
         Otherwise, shape is `(cells, genes)`. In this case, return type is :class:`~pandas.DataFrame` unless `return_numpy` is True.
+
         """
         adata = self._validate_anndata(adata)
         scdl = self._make_data_loader(
@@ -342,6 +340,7 @@ class VELOVI(VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
         -------
         If `n_samples` > 1 and `return_mean` is False, then the shape is `(samples, cells, genes)`.
         Otherwise, shape is `(cells, genes)`. In this case, return type is :class:`~pandas.DataFrame` unless `return_numpy` is True.
+
         """
         adata = self._validate_anndata(adata)
         if indices is None:
@@ -484,6 +483,7 @@ class VELOVI(VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
         -------
         If `n_samples` > 1 and `return_mean` is False, then the shape is `(samples, cells, genes)`.
         Otherwise, shape is `(cells, genes)`. In this case, return type is :class:`~pandas.DataFrame` unless `return_numpy` is True.
+
         """
         adata = self._validate_anndata(adata)
         if indices is None:
@@ -658,6 +658,7 @@ class VELOVI(VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
         -------
         If `n_samples` > 1 and `return_mean` is False, then the shape is `(samples, cells, genes)`.
         Otherwise, shape is `(cells, genes)`. In this case, return type is :class:`~pandas.DataFrame` unless `return_numpy` is True.
+
         """
         adata = self._validate_anndata(adata)
 
@@ -813,6 +814,7 @@ class VELOVI(VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
         -------
         If `n_samples` > 1 and `return_mean` is False, then the shape is `(samples, cells, genes)`.
         Otherwise, shape is `(cells, genes)`. In this case, return type is :class:`~pandas.DataFrame` unless `return_numpy` is True.
+
         """
         adata = self._validate_anndata(adata)
         scdl = self._make_data_loader(
@@ -919,6 +921,7 @@ class VELOVI(VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
         Returns
         -------
         %(returns)s
+
         """
         setup_method_args = cls._get_setup_method_args(**locals())
         anndata_fields = [
@@ -969,6 +972,7 @@ class VELOVI(VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
         -------
         Tuple of DataFrame and AnnData. DataFrame is genes by cell types with score per cell type.
         AnnData is the permutated version of the original AnnData.
+
         """
         adata = self._validate_anndata(adata)
         adata_manager = self.get_anndata_manager(adata)
@@ -1092,6 +1096,7 @@ def _directional_statistics_per_cell(
     ----------
     tensor
         Shape of samples by genes for a given cell.
+
     """
     n_samples = tensor.shape[0]
     # over samples axis
