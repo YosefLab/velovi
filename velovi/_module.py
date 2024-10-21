@@ -1,4 +1,5 @@
 """Main module."""
+
 from typing import Callable, Iterable, Literal, Optional
 
 import numpy as np
@@ -44,6 +45,7 @@ class DecoderVELOVI(nn.Module):
         Whether to use layer norm in layers
     linear_decoder
         Whether to use linear decoder for time
+
     """
 
     def __init__(
@@ -183,6 +185,7 @@ class VELOVAE(BaseModuleClass):
     var_activation
         Callable used to ensure positivity of the variational distributions' variance.
         When `None`, defaults to `torch.exp`.
+
     """
 
     def __init__(
